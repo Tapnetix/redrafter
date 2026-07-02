@@ -9,6 +9,14 @@
 
 export interface TestData {
   appName: string;
+  /** Canned response for the `connection_add` command. Defaults to echoing
+   * back the caller's args (see `../mocks/tauri-mock.ts`) when unset. */
+  connectionAdd?: {
+    id: string;
+    providerKind: string;
+    baseUrl: string;
+    enabledModels: string[];
+  };
 }
 
 export const DEFAULT_TEST_DATA: TestData = {

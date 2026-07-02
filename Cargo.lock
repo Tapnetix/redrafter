@@ -2839,6 +2839,8 @@ name = "redrafter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "llm-provider",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2848,6 +2850,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-updater",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
