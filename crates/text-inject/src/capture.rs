@@ -41,15 +41,21 @@ pub fn capture_with<P: PlatformOps>(ops: &P) -> Result<Captured> {
 fn capture_via_clipboard<P: PlatformOps>(ops: &P) -> Result<Captured> {
     let saved = ops.clipboard_get().unwrap_or(None);
 
-    ops.simulate_copy()?;
-    let text = ops.clipboard_get()?.unwrap_or_default();
+    // Run the copy+read as a single fallible step so a hard error from
+    // `simulate_copy`/`clipboard_get` doesn't skip the restore below via
+    // early `?` return — the prior clipboard must be restored on every
+    // error branch, not just the success path.
+    let result: Result<String> = (|| {
+        ops.simulate_copy()?;
+        Ok(ops.clipboard_get()?.unwrap_or_default())
+    })();
 
-    if let Some(prior) = saved {
-        ops.clipboard_set(&prior)?;
+    if let Some(prior) = &saved {
+        ops.clipboard_set(prior)?;
     }
 
     Ok(Captured {
-        text,
+        text: result?,
         source: CaptureSource::Clipboard,
     })
 }
@@ -101,5 +107,61 @@ mod tests {
 
         assert_eq!(captured.text, "copied via cmd+c");
         assert_eq!(captured.source, CaptureSource::Clipboard);
+    }
+
+    /// Fake whose `clipboard_get` fails exactly once, right after
+    /// `simulate_copy` has already overwritten the clipboard with the
+    /// selection — exercising the hard-error path where the copied
+    /// selection would otherwise be stranded on the clipboard.
+    struct ClipboardGetErrorOps {
+        clipboard: RefCell<Option<String>>,
+        fail_next_get: RefCell<bool>,
+    }
+
+    impl PlatformOps for ClipboardGetErrorOps {
+        fn ax_read_selection(&self) -> Result<String> {
+            // AX reachable, but nothing is selected -> falls back to clipboard.
+            Ok(String::new())
+        }
+        fn ax_write_selection(&self, _text: &str) -> Result<()> {
+            Err(anyhow!("not used in this test"))
+        }
+        fn clipboard_get(&self) -> Result<Option<String>> {
+            if *self.fail_next_get.borrow() {
+                *self.fail_next_get.borrow_mut() = false;
+                return Err(anyhow!("clipboard read failed"));
+            }
+            Ok(self.clipboard.borrow().clone())
+        }
+        fn clipboard_set(&self, text: &str) -> Result<()> {
+            *self.clipboard.borrow_mut() = Some(text.to_string());
+            Ok(())
+        }
+        fn simulate_copy(&self) -> Result<()> {
+            *self.clipboard.borrow_mut() = Some("copied selection".to_string());
+            *self.fail_next_get.borrow_mut() = true;
+            Ok(())
+        }
+        fn simulate_paste(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn clipboard_get_error_after_copy_still_restores_prior_clipboard_and_errors() {
+        let ops = ClipboardGetErrorOps {
+            clipboard: RefCell::new(Some("prior clipboard".to_string())),
+            fail_next_get: RefCell::new(false),
+        };
+
+        let result = capture_with(&ops);
+
+        assert!(result.is_err());
+        assert_eq!(
+            ops.clipboard_get().unwrap(),
+            Some("prior clipboard".to_string()),
+            "prior clipboard must be restored even when the post-copy read hard-errors, \
+             not left holding the copied selection"
+        );
     }
 }
