@@ -1,0 +1,137 @@
+'use client';
+
+// The real app shell / composition root on the frontend side (A14). It owns
+// the boot flow and the in-app section switcher that the standalone route
+// pages (app/src/app/*/page.tsx) previously stood in for:
+//
+//   1. On boot, read permission + connections + theme from the backend.
+//   2. An ungranted Accessibility permission routes to Onboarding (S17);
+//      once granted with no connected provider, to FirstRun; otherwise into
+//      the settings shell (NavRail chrome + the selected screen).
+//
+// The Models/Presets/History sections have no Phase A screen yet (Phase B/C);
+// their rail buttons navigate to a "coming soon" placeholder so the rail is
+// never dead. The Capture panel is normally its own hotkey-triggered overlay
+// window (wired natively in lib.rs); here the rail's implicit capture entry
+// and the standalone /capture route stand in for that trigger.
+
+import { useCallback, useEffect, useState } from 'react';
+import NavRail, { type Section } from '@/components/NavRail';
+import Onboarding from '@/screens/Onboarding';
+import FirstRun from '@/screens/FirstRun';
+import General from '@/screens/General';
+import Behavior from '@/screens/Behavior';
+import { getPermissionStatus, connectionList } from '@/lib/ipc';
+import { applyTheme, loadTheme } from '@/lib/theme';
+
+/** Where the boot check has decided the user should land. */
+type Route = 'loading' | 'onboarding' | 'first-run' | 'settings';
+
+const SECTION_TITLES: Record<Section, string> = {
+  general: 'General',
+  connections: 'Connections',
+  models: 'Models',
+  behavior: 'Behavior',
+  presets: 'Presets',
+  history: 'History',
+};
+
+/**
+ * Decides the boot route from backend state: no Accessibility -> onboarding;
+ * granted but no connected provider -> first-run; otherwise the settings shell.
+ */
+async function decideRoute(): Promise<Route> {
+  try {
+    const status = await getPermissionStatus();
+    if (!status.granted) return 'onboarding';
+  } catch {
+    // If we can't even read permission state, start at onboarding — the safest
+    // place, since nothing downstream works without Accessibility.
+    return 'onboarding';
+  }
+
+  try {
+    const connections = await connectionList();
+    if (connections.length === 0) return 'first-run';
+  } catch {
+    // A failed connection read shouldn't strand the user; treat it as "no
+    // provider yet" and send them to first-run to add one.
+    return 'first-run';
+  }
+
+  return 'settings';
+}
+
+function ComingSoon({ section }: { section: Section }) {
+  return (
+    <div className="settings" data-testid={`section-${section}-placeholder`}>
+      <section className="sec">
+        <h2 className="sec__title">{SECTION_TITLES[section]}</h2>
+        <p className="muted tiny" style={{ margin: 0 }}>
+          The {SECTION_TITLES[section]} screen arrives in a later phase.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function SectionView({ section }: { section: Section }) {
+  switch (section) {
+    case 'general':
+      return <General />;
+    case 'behavior':
+      return <Behavior />;
+    default:
+      return <ComingSoon section={section} />;
+  }
+}
+
+export default function App() {
+  const [route, setRoute] = useState<Route>('loading');
+  const [section, setSection] = useState<Section>('general');
+
+  // Boot: rehydrate the theme and decide where to land.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      applyTheme(await loadTheme());
+      const next = await decideRoute();
+      if (!cancelled) setRoute(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Re-run the boot decision after onboarding/first-run finish, so granting a
+  // permission or adding a provider advances the user without a restart.
+  const advance = useCallback(async () => {
+    setRoute(await decideRoute());
+  }, []);
+
+  if (route === 'loading') {
+    return <div data-testid="app-loading" aria-busy="true" />;
+  }
+
+  if (route === 'onboarding') {
+    return <Onboarding onContinue={advance} />;
+  }
+
+  if (route === 'first-run') {
+    return <FirstRun onContinue={advance} />;
+  }
+
+  return (
+    <div className="app no-sidebar" data-testid="app-shell">
+      <NavRail active={section} onNavigate={setSection} />
+      <main className="main">
+        <header className="topbar">
+          <h1 className="topbar__title">{SECTION_TITLES[section]}</h1>
+        </header>
+        <div className="content" style={{ padding: 0 }}>
+          <SectionView section={section} />
+        </div>
+      </main>
+    </div>
+  );
+}

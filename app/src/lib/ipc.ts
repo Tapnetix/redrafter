@@ -29,6 +29,23 @@ export function settingsSet(key: string, value: string): Promise<void> {
   return invoke('settings_set', { key, value });
 }
 
+// ── Hotkey (A6) ──
+/** Result of a `hotkey_set`, mirroring `hotkey.rs`'s `HotkeySetResult`. */
+export interface HotkeySetResult {
+  ok: boolean;
+  conflict: boolean;
+}
+
+/**
+ * Saves `combo` (e.g. `"Ctrl+Alt+R"`) as the new global hotkey, unregistering
+ * the previous one first. Resolves with `conflict: true` (rather than
+ * rejecting) when the combo is already claimed elsewhere. Backed by the
+ * `hotkey_set` Tauri command; C2/C6 reuse this for the rebind dialog.
+ */
+export function hotkeySet(combo: string): Promise<HotkeySetResult> {
+  return invoke<HotkeySetResult>('hotkey_set', { combo });
+}
+
 // ── Connections (A7) ──
 /** A stored provider connection, mirroring `connections.rs`'s `Connection`. */
 export interface Connection {
@@ -50,6 +67,11 @@ export interface ConnectionAddArgs extends Record<string, unknown> {
  */
 export function connectionAdd(args: ConnectionAddArgs): Promise<Connection> {
   return invoke<Connection>('connection_add', args);
+}
+
+/** Lists every stored provider connection. Backed by `connection_list`. */
+export function connectionList(): Promise<Connection[]> {
+  return invoke<Connection[]>('connection_list');
 }
 
 // ── Permission open-settings (A9/A13) ──
@@ -92,6 +114,19 @@ export function restoreOriginal(): Promise<string> {
 /** Injects `text` into the focused app in place of the current selection. */
 export function injectText(text: string): Promise<void> {
   return invoke('inject_text', { text });
+}
+
+/** Cancels the in-flight `refine` call, if any. Backed by `cancel_refine`. */
+export function cancelRefine(): Promise<void> {
+  return invoke('cancel_refine');
+}
+
+/**
+ * Triggers a refine from the menu-bar tray (same pipeline as `refine`, but the
+ * tray's entry point). Backed by the `tray_refine` Tauri command.
+ */
+export function trayRefine(): Promise<RefineOutcome> {
+  return invoke<RefineOutcome>('tray_refine');
 }
 
 /**

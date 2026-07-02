@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-original"
+description = "Enables the restore_original command without any pre-configured scope."
+commands.allow = ["restore_original"]
+
+[[permission]]
+identifier = "deny-restore-original"
+description = "Denies the restore_original command without any pre-configured scope."
+commands.deny = ["restore_original"]
