@@ -102,15 +102,22 @@ fn apply_combo<B: ShortcutBackend>(
                 conflict: false,
             });
         }
-        let prev_shortcut = parse(prev)?;
-        let _ = backend.unregister(prev_shortcut);
     }
 
+    // Register the new combo first. Only once it succeeds do we release the
+    // previous one, so a conflict on `combo` never leaves the user without a
+    // working hotkey (and `state.current`/the backend never desync).
     match backend.register(shortcut) {
-        Ok(()) => Ok(HotkeySetResult {
-            ok: true,
-            conflict: false,
-        }),
+        Ok(()) => {
+            if let Some(prev) = previous {
+                let prev_shortcut = parse(prev)?;
+                let _ = backend.unregister(prev_shortcut);
+            }
+            Ok(HotkeySetResult {
+                ok: true,
+                conflict: false,
+            })
+        }
         Err(_) => Ok(HotkeySetResult {
             ok: false,
             conflict: true,
@@ -256,6 +263,27 @@ mod tests {
         );
         // The previous combo was freed, so it can be registered again.
         assert!(backend.register(parse("Ctrl+Alt+R").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rebind_conflict_leaves_previous_combo_registered() {
+        let backend = InMemoryRegistry::default();
+        // Something else already owns this combo.
+        backend.register(parse("Ctrl+Alt+T").unwrap()).unwrap();
+        // The user's currently active combo.
+        apply_combo(&backend, None, "Ctrl+Alt+R").unwrap();
+
+        let result = apply_combo(&backend, Some("Ctrl+Alt+R"), "Ctrl+Alt+T").unwrap();
+        assert_eq!(
+            result,
+            HotkeySetResult {
+                ok: false,
+                conflict: true
+            }
+        );
+        // The previous combo must still be registered: trying to register it
+        // again should fail because it's still held.
+        assert!(backend.register(parse("Ctrl+Alt+R").unwrap()).is_err());
     }
 
     #[test]
