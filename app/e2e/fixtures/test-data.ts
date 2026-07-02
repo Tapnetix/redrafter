@@ -7,6 +7,13 @@
  * real Tauri commands, rather than speculating on the full contract here.
  */
 
+/** Mirrors `RefineOutcome` from src-tauri/src/orchestrator.rs. */
+export interface RefineFixture {
+  original: string;
+  refined: string;
+  model: string;
+}
+
 export interface TestData {
   appName: string;
   /** Seed for the mocked `permission_status` command's `granted` field (A6/A12). */
@@ -21,10 +28,23 @@ export interface TestData {
     baseUrl: string;
     enabledModels: string[];
   };
+  /** Seeds the mocked `refine` command's success response (A9). */
+  refineOutcome?: RefineFixture;
+  /**
+   * When set, the mocked `refine` command rejects with this error code
+   * instead of resolving, driving the no-active-model (A11) and
+   * permission-needed (A13) capture states.
+   */
+  refineError?: 'no_active_model' | 'permission_denied';
 }
 
 export const DEFAULT_TEST_DATA: TestData = {
   appName: 'redrafter',
   permissionGranted: false,
   settings: {},
+  refineOutcome: {
+    original: 'original selection',
+    refined: 'refined selection',
+    model: 'test-model',
+  },
 };

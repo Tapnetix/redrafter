@@ -1,6 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import { getPermissionStatus, settingsGet, settingsSet, connectionAdd } from './ipc';
+import {
+  getPermissionStatus,
+  settingsGet,
+  settingsSet,
+  connectionAdd,
+  permissionOpenSettings,
+  refine,
+  restoreOriginal,
+  injectText,
+  trayQuit,
+} from './ipc';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -54,5 +64,41 @@ describe('ipc', () => {
       apiKey: 'sk-test',
     });
     expect(result.enabledModels).toEqual(['gpt-4o-mini']);
+  });
+
+  it('permissionOpenSettings invokes permission_open_settings with no args', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await permissionOpenSettings();
+    expect(mockedInvoke).toHaveBeenCalledWith('permission_open_settings');
+  });
+
+  it('refine invokes refine with no args and resolves the outcome', async () => {
+    const outcome = { original: 'rough', refined: 'polished', model: 'claude-opus-4-6' };
+    mockedInvoke.mockResolvedValue(outcome);
+
+    await expect(refine()).resolves.toEqual(outcome);
+    expect(mockedInvoke).toHaveBeenCalledWith('refine');
+  });
+
+  it('restoreOriginal invokes restore_original and resolves the saved original', async () => {
+    mockedInvoke.mockResolvedValue('rough draft');
+
+    await expect(restoreOriginal()).resolves.toBe('rough draft');
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_original');
+  });
+
+  it('injectText invokes inject_text with the text', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await injectText('rough draft');
+    expect(mockedInvoke).toHaveBeenCalledWith('inject_text', { text: 'rough draft' });
+  });
+
+  it('trayQuit invokes tray_quit with no args', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await trayQuit();
+    expect(mockedInvoke).toHaveBeenCalledWith('tray_quit');
   });
 });

@@ -29,7 +29,15 @@ export function getTauriMockScript(data: TestData): string {
       const state = {
         permissionGranted: !!TEST_DATA.permissionGranted,
         settings: Object.assign({}, TEST_DATA.settings || {}),
+        // Mirrors the orchestrator's restore buffer (A9): the original text
+        // from the most recent successful \`refine\`, for \`restore_original\`.
+        lastOriginal: null,
       };
+
+      // Log of every invoked command, exposed on window so specs can assert
+      // which backend commands fired (and with what args) without a real
+      // backend to observe side effects on (e.g. a blind inject).
+      window.__TAURI_MOCK_CALLS__ = [];
 
       // Callback registry for event listeners (used by listen/transformCallback)
       const callbacks = {};
@@ -78,24 +86,57 @@ export function getTauriMockScript(data: TestData): string {
               }
             );
 
+          // ── Default refine pipeline (A9): capture -> prompt -> model ->
+          // inject, all in one backend call. Errors drive the no-active-model
+          // (A11) and permission-needed (A13) capture states.
+          case 'refine': {
+            if (TEST_DATA.refineError) {
+              throw TEST_DATA.refineError;
+            }
+            const outcome = TEST_DATA.refineOutcome || {
+              original: 'original selection',
+              refined: 'refined selection',
+              model: 'test-model',
+            };
+            state.lastOriginal = outcome.original;
+            return outcome;
+          }
+
+          // ── Restore (A9/A10): re-fetch the buffered original, then inject
+          // it back in place as two explicit calls (mirrors capture-restore's
+          // declared backend commands in controls/capture.json). ──
+          case 'restore_original': {
+            if (state.lastOriginal == null) {
+              throw 'no captured original to restore';
+            }
+            return state.lastOriginal;
+          }
+          case 'inject_text':
+            return null;
+
+          // ── Tray (A9 display-only carve-out; only tray_quit is wired) ──
+          case 'tray_quit':
+            return null;
+
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
             return undefined;
         }
       }
 
-      // Every invoked command (name + args) is recorded here so specs can
-      // assert which backend commands a user action triggered, e.g.:
-      //   const calls = await page.evaluate(() => window.__TAURI_MOCK_CALLS__);
-      window.__TAURI_MOCK_CALLS__ = [];
-
       // Install the mock __TAURI_INTERNALS__ before any code runs
       window.__TAURI_INTERNALS__ = {
         invoke(cmd, args) {
           window.__TAURI_MOCK_CALLS__.push({ cmd, args });
-          return new Promise((resolve) => {
+          return new Promise((resolve, reject) => {
             // Use setTimeout(0) to simulate async IPC
-            setTimeout(() => resolve(handleCommand(cmd, args)), 0);
+            setTimeout(() => {
+              try {
+                resolve(handleCommand(cmd, args));
+              } catch (err) {
+                reject(err);
+              }
+            }, 0);
           });
         },
 
