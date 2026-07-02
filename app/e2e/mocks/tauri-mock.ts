@@ -28,7 +28,13 @@ export function getTauriMockScript(data: TestData): string {
       // this rather than TEST_DATA itself.
       const state = {
         permissionGranted: !!TEST_DATA.permissionGranted,
+        settings: Object.assign({}, TEST_DATA.settings || {}),
       };
+
+      // Log of every invoked command (name + args), in order, so specs can
+      // assert a given backend command was called with the expected
+      // payload without needing a real backend (e.g. settings_set writes).
+      window.__TAURI_MOCK_CALLS__ = [];
 
       // Callback registry for event listeners (used by listen/transformCallback)
       const callbacks = {};
@@ -52,14 +58,19 @@ export function getTauriMockScript(data: TestData): string {
             state.permissionGranted = true;
             return null;
 
-          // ── Settings key-value store (A4), used by General (A12) et al ──
+          // ── Settings key-value store (A4), used by General (A12),
+          // Behavior (A8) et al ──
           case 'settings_get': {
             const key = args && args.key;
-            const settings = TEST_DATA.settings || {};
-            return Object.prototype.hasOwnProperty.call(settings, key) ? settings[key] : null;
+            return Object.prototype.hasOwnProperty.call(state.settings, key)
+              ? state.settings[key]
+              : null;
           }
-          case 'settings_set':
+          case 'settings_set': {
+            const key = args && args.key;
+            state.settings[key] = args && args.value;
             return null;
+          }
 
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
@@ -70,6 +81,7 @@ export function getTauriMockScript(data: TestData): string {
       // Install the mock __TAURI_INTERNALS__ before any code runs
       window.__TAURI_INTERNALS__ = {
         invoke(cmd, args) {
+          window.__TAURI_MOCK_CALLS__.push({ cmd, args });
           return new Promise((resolve) => {
             // Use setTimeout(0) to simulate async IPC
             setTimeout(() => resolve(handleCommand(cmd, args)), 0);
