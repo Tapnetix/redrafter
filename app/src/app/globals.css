@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 @import '../../../docs/wireframes/tokens.css';
+@import '../../../docs/wireframes/app.css';
 
 html,
 body {

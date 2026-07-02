@@ -23,6 +23,13 @@ export function getTauriMockScript(data: TestData): string {
     (() => {
       const TEST_DATA = ${serialized};
 
+      // Mutable mock state, seeded from TEST_DATA. Commands that simulate a
+      // stateful backend (e.g. a permission being granted mid-test) mutate
+      // this rather than TEST_DATA itself.
+      const state = {
+        permissionGranted: !!TEST_DATA.permissionGranted,
+      };
+
       // Callback registry for event listeners (used by listen/transformCallback)
       const callbacks = {};
       let callbackId = 0;
@@ -33,6 +40,16 @@ export function getTauriMockScript(data: TestData): string {
       // Command handler map: command name -> handler function
       function handleCommand(cmd, args) {
         switch (cmd) {
+          case 'permission_status':
+            // Mirrors src-tauri/src/permission.rs's PermissionStatus shape.
+            return { granted: state.permissionGranted };
+          case 'permission_open_settings':
+            // The real command just opens System Settings; it doesn't grant
+            // the permission itself. The mock simulates the user granting it
+            // in System Settings so the next permission_status poll picks it
+            // up, without needing a real OS-level Accessibility prompt.
+            state.permissionGranted = true;
+            return null;
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
             return undefined;
