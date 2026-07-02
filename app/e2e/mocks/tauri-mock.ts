@@ -40,6 +40,7 @@ export function getTauriMockScript(data: TestData): string {
       // Command handler map: command name -> handler function
       function handleCommand(cmd, args) {
         switch (cmd) {
+          // ── Permission (A4/A6/A12) ──
           case 'permission_status':
             // Mirrors src-tauri/src/permission.rs's PermissionStatus shape.
             return { granted: state.permissionGranted };
@@ -50,6 +51,16 @@ export function getTauriMockScript(data: TestData): string {
             // up, without needing a real OS-level Accessibility prompt.
             state.permissionGranted = true;
             return null;
+
+          // ── Settings key-value store (A4), used by General (A12) et al ──
+          case 'settings_get': {
+            const key = args && args.key;
+            const settings = TEST_DATA.settings || {};
+            return Object.prototype.hasOwnProperty.call(settings, key) ? settings[key] : null;
+          }
+          case 'settings_set':
+            return null;
+
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
             return undefined;
