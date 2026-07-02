@@ -85,7 +85,10 @@ export const RAIL_ITEMS: RailItem[] = [
   },
 ];
 
-function RailIcon({ children }: { children: ReactNode }) {
+/** Wraps an icon's inner `<path>`/`<rect>` markup in the rail's standard
+ * `<svg>` shell. Exported so `Sidebar` can reuse `RAIL_ITEMS`' icons without
+ * duplicating this wrapper. */
+export function RailIcon({ children }: { children: ReactNode }) {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
       {children}

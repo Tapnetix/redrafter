@@ -7,16 +7,19 @@
 //   1. On boot, read permission + connections + theme from the backend.
 //   2. An ungranted Accessibility permission routes to Onboarding (S17);
 //      once granted with no connected provider, to FirstRun; otherwise into
-//      the settings shell (NavRail chrome + the selected screen).
+//      the settings shell (NavRail + Sidebar chrome around the selected
+//      screen).
 //
 // The Models/Presets/History sections have no Phase A screen yet (Phase B/C);
-// their rail buttons navigate to a "coming soon" placeholder so the rail is
-// never dead. The Capture panel is normally its own hotkey-triggered overlay
-// window (wired natively in lib.rs); here the rail's implicit capture entry
-// and the standalone /capture route stand in for that trigger.
+// their rail/sidebar nav items navigate to a "coming soon" placeholder so
+// neither is ever dead. The Capture panel is normally its own
+// hotkey-triggered overlay window (wired natively in lib.rs); here the
+// rail's implicit capture entry and the standalone /capture route stand in
+// for that trigger.
 
 import { useCallback, useEffect, useState } from 'react';
 import NavRail, { type Section } from '@/components/NavRail';
+import Sidebar from '@/components/Sidebar';
 import Onboarding from '@/screens/Onboarding';
 import FirstRun from '@/screens/FirstRun';
 import General from '@/screens/General';
@@ -122,8 +125,9 @@ export default function App() {
   }
 
   return (
-    <div className="app no-sidebar" data-testid="app-shell">
+    <div className="app" data-testid="app-shell">
       <NavRail active={section} onNavigate={setSection} />
+      <Sidebar active={section} onNavigate={setSection} />
       <main className="main">
         <header className="topbar">
           <h1 className="topbar__title">{SECTION_TITLES[section]}</h1>

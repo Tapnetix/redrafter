@@ -46,9 +46,21 @@ fn build_test_app() -> tauri::App<tauri::test::MockRuntime> {
     // same as production `run()`) rather than `tauri::test::mock_context`:
     // the latter's `Resolved::default()` ACL rejects *every* command
     // (including registered ones) with "not allowed", which would make
-    // every command in this test look unregistered. The real config (with
-    // no `capabilities/` directory) gets Tauri's default permissive
-    // capability, so a command's actual registration is what's under test.
+    // every command in this test look unregistered.
+    //
+    // The real config now ships `capabilities/default.json` (this diff),
+    // granting exactly the Phase A commands above to every window. That
+    // capability's `windows: ["*"]` scope still only matches requests whose
+    // URL resolves to "local" (Tauri's own asset/custom-protocol origin);
+    // this test's synthetic `InvokeRequest` uses a plain
+    // `http://tauri.localhost` URL, which the ACL treats as a *different*,
+    // non-local origin — so every invocation below is actually rejected with
+    // "not allowed" (an ACL denial), not run. That's still enough to
+    // discriminate registered-vs-not (see `is_unregistered_rejection`'s doc
+    // comment: an ACL denial's text never contains "not found"), but it also
+    // means none of these command bodies actually execute here — see
+    // `src/lib.rs`'s/`src/tray.rs`'s own `#[cfg(test)]` unit tests for
+    // coverage of the command bodies themselves.
     let app = tauri::test::mock_builder()
         .invoke_handler(redrafter_lib::invoke_handler())
         .build(tauri::generate_context!())

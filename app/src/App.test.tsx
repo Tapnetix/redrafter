@@ -70,11 +70,12 @@ describe('App', () => {
     expect(screen.queryByTestId('icon-rail')).not.toBeInTheDocument();
   });
 
-  it('boots to the settings shell (with nav rail) when granted and a provider exists', async () => {
+  it('boots to the settings shell (with nav rail and sidebar) when granted and a provider exists', async () => {
     mockBackend({ granted: true });
     render(<App />);
 
     expect(await screen.findByTestId('icon-rail')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar')).toBeInTheDocument();
     // General is the default section.
     expect(screen.getByTestId('general-permission')).toBeInTheDocument();
   });
@@ -87,6 +88,29 @@ describe('App', () => {
     fireEvent.click(screen.getByTestId('rail-behavior'));
 
     expect(await screen.findByTestId('behavior-default-direction')).toBeInTheDocument();
+  });
+
+  it('switches sections via the sidebar', async () => {
+    mockBackend({ granted: true });
+    render(<App />);
+
+    await screen.findByTestId('icon-rail');
+    fireEvent.click(screen.getByTestId('nav-behavior'));
+
+    expect(await screen.findByTestId('behavior-default-direction')).toBeInTheDocument();
+  });
+
+  it("shows the sidebar's active-model summary from the connected provider", async () => {
+    mockBackend({
+      granted: true,
+      connections: [
+        { id: '1', providerKind: 'ollama', baseUrl: 'http://localhost:11434', enabledModels: ['llama3'] },
+      ],
+    });
+    render(<App />);
+
+    await screen.findByTestId('icon-rail');
+    expect(await screen.findByTestId('sidebar-active-model')).toHaveTextContent('llama3');
   });
 
   it('applies the persisted theme on boot', async () => {
