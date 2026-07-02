@@ -61,15 +61,32 @@ export function getTauriMockScript(data: TestData): string {
           case 'settings_set':
             return null;
 
+          // ── Connections (A7), used by FirstRun ──
+          case 'connection_add':
+            return (
+              TEST_DATA.connectionAdd ?? {
+                id: '1',
+                providerKind: args && args.providerKind,
+                baseUrl: args && args.baseUrl,
+                enabledModels: ['default'],
+              }
+            );
+
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
             return undefined;
         }
       }
 
+      // Every invoked command (name + args) is recorded here so specs can
+      // assert which backend commands a user action triggered, e.g.:
+      //   const calls = await page.evaluate(() => window.__TAURI_MOCK_CALLS__);
+      window.__TAURI_MOCK_CALLS__ = [];
+
       // Install the mock __TAURI_INTERNALS__ before any code runs
       window.__TAURI_INTERNALS__ = {
         invoke(cmd, args) {
+          window.__TAURI_MOCK_CALLS__.push({ cmd, args });
           return new Promise((resolve) => {
             // Use setTimeout(0) to simulate async IPC
             setTimeout(() => resolve(handleCommand(cmd, args)), 0);

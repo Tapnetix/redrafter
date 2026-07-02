@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import { getPermissionStatus, settingsGet, settingsSet } from './ipc';
+import { getPermissionStatus, settingsGet, settingsSet, connectionAdd } from './ipc';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -32,5 +32,27 @@ describe('ipc', () => {
 
     await settingsSet('theme', 'dark');
     expect(mockedInvoke).toHaveBeenCalledWith('settings_set', { key: 'theme', value: 'dark' });
+  });
+
+  it('connectionAdd invokes connection_add with the given args and returns its result', async () => {
+    mockedInvoke.mockResolvedValue({
+      id: '1',
+      providerKind: 'openai',
+      baseUrl: 'https://api.openai.com',
+      enabledModels: ['gpt-4o-mini'],
+    });
+
+    const result = await connectionAdd({
+      providerKind: 'openai',
+      baseUrl: 'https://api.openai.com',
+      apiKey: 'sk-test',
+    });
+
+    expect(mockedInvoke).toHaveBeenCalledWith('connection_add', {
+      providerKind: 'openai',
+      baseUrl: 'https://api.openai.com',
+      apiKey: 'sk-test',
+    });
+    expect(result.enabledModels).toEqual(['gpt-4o-mini']);
   });
 });

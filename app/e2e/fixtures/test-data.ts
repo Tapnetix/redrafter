@@ -13,6 +13,14 @@ export interface TestData {
   permissionGranted?: boolean;
   /** Backs `settings_get`/`settings_set`: key -> stored value (A12). */
   settings?: Record<string, string>;
+  /** Canned response for the `connection_add` command (A7). Defaults to echoing
+   * back the caller's args (see `../mocks/tauri-mock.ts`) when unset. */
+  connectionAdd?: {
+    id: string;
+    providerKind: string;
+    baseUrl: string;
+    enabledModels: string[];
+  };
 }
 
 export const DEFAULT_TEST_DATA: TestData = {
