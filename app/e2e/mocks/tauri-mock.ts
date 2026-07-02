@@ -31,11 +31,6 @@ export function getTauriMockScript(data: TestData): string {
         settings: Object.assign({}, TEST_DATA.settings || {}),
       };
 
-      // Log of every invoked command (name + args), in order, so specs can
-      // assert a given backend command was called with the expected
-      // payload without needing a real backend (e.g. settings_set writes).
-      window.__TAURI_MOCK_CALLS__ = [];
-
       // Callback registry for event listeners (used by listen/transformCallback)
       const callbacks = {};
       let callbackId = 0;
