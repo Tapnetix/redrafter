@@ -10,7 +10,10 @@
     "frontendDist": "../out"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+    },
     "windows": [
       {
         "label": "main",
