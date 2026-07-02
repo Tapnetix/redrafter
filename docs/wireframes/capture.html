@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Capture</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="desk" data-testid="capture-desk">
+
+  <!-- faint mock app behind (an email reply being composed) -->
+  <div class="mock-app" aria-hidden="true">
+    <div class="mock-win">
+      <div class="mock-win__bar"><span class="mock-win__dots"><i></i><i></i><i></i></span> New Message — Re: Q3 release plan</div>
+      <div class="mock-win__body">
+        <p style="margin:0 0 8px">&gt; On Mon, Alex wrote: are we still on track for Q3? any risk of slipping?</p>
+        <p style="margin:0"><span class="mock-sel">/rd read the quoted thread and refine my answer, keep it warm but concise /m We're good with the Q3 release plan, no delays, engineers working hard, shipping by Monday</span></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- CURSOR HUD: the small near-cursor pill shown when the user prefers it over the full panel -->
+  <div id="cursor-hud" data-testid="cursor-hud" hidden style="top:190px;left:50%;transform:translateX(-30%)" class="cursor-hud">
+    <span id="cursor-hud-refining" data-testid="cursor-hud-refining"><span class="spinner" aria-hidden="true"></span> Refining…</span>
+    <span id="cursor-hud-done" data-testid="cursor-hud-done" hidden class="ok"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg> Refined ✓</span>
+  </div>
+
+  <!-- menu-bar tray button (top-right, as in the macOS menu bar) -->
+  <button class="btn btn--sm" id="tray-btn" data-testid="tray-btn" aria-haspopup="true" aria-expanded="false" style="position:fixed;top:14px;right:20px;z-index:50" onclick="toggleTray(event)">
+    <span class="status-dot green"></span> redrafter <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+  <div id="tray-popover" class="tray" data-static hidden style="position:fixed;top:48px;right:20px;z-index:50" role="menu" aria-label="redrafter tray" data-testid="tray">
+    <div class="tray__head">
+      <span class="cap__badge" style="width:22px;height:22px;font-size:12px" aria-hidden="true">R</span>
+      <h2 style="font-size:14px;font-weight:700;margin:0">redrafter</h2>
+      <!-- both tray statuses reachable (toggle in the state scaffolding below) -->
+      <span id="tray-status-idle" data-testid="tray-status-idle" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)"><span class="status-dot green"></span> Ready</span>
+      <span id="tray-status-refining" data-testid="tray-status-refining" hidden style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)"><span class="spinner" style="width:13px;height:13px" aria-hidden="true"></span> refining…</span>
+    </div>
+    <!-- active model — collapsed row; reveals the switcher on demand -->
+    <button class="menu__item" role="menuitem" id="capture-tray-active-model" data-testid="tray-active-model" aria-expanded="false" aria-controls="capture-tray-model-region" onclick="toggleTrayModels(this)">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+      Active model
+      <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="mono tiny" data-active-model-label style="color:var(--primary)">claude-opus-4-6</span><span class="tray-caret" aria-hidden="true">▸</span></span>
+    </button>
+    <div id="capture-tray-model-region" hidden>
+    <div style="max-height:320px;overflow-y:auto" data-testid="tray-model-list">
+      <!-- Favorites (flat, cross-provider) -->
+      <div class="tray__sec">★ Favorites</div>
+      <button class="menu__item" role="menuitemradio" aria-checked="true" data-testid="tray-fav-opus" data-model-label="claude-opus-4-6" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono" style="flex:1">claude-opus-4-6</span><span style="color:var(--warning)">★</span></button>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-fav-sonnet" data-model-label="claude-sonnet-4-6" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono" style="flex:1">claude-sonnet-4-6</span><span style="color:var(--warning)">★</span></button>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-fav-qwen" data-model-label="qwen3:8b" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono" style="flex:1">qwen3:8b</span><span class="run-state running" style="font-size:11px">● running</span><span style="color:var(--warning)">★</span></button>
+
+      <div class="tray__sec">Anthropic</div>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-model-opus" data-model-label="claude-opus-4-6" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono">claude-opus-4-6</span></button>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-model-sonnet" data-model-label="claude-sonnet-4-6" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono">claude-sonnet-4-6</span></button>
+      <div class="tray__sec">OpenAI</div>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-model-gpt" data-model-label="gpt-5.1" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono">gpt-5.1</span></button>
+      <div class="tray__sec">Google</div>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-model-gemini" data-model-label="gemini-1.5-flash" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono">gemini-1.5-flash</span></button>
+      <div class="tray__sec">Ollama</div>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-model-qwen" data-model-label="qwen3:8b" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono" style="flex:1">qwen3:8b</span><span class="run-state running" style="font-size:11px">● running</span></button>
+      <button class="menu__item" role="menuitemradio" aria-checked="false" data-testid="tray-model-llama" data-model-label="llama3.1:8b" onclick="pickTrayModel(this)"><span class="radio-mark" aria-hidden="true"></span> <span class="mono" style="flex:1">llama3.1:8b</span><span class="run-state" style="font-size:11px">○ available</span></button>
+    </div>
+    <a class="menu__item" href="models.html" role="menuitem" data-testid="tray-manage-models"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg> Manage models…</a>
+    </div>
+    <div class="menu__sep"></div>
+    <a class="menu__item" href="tray.html" role="menuitem" data-testid="view-tray"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg> Full tray menu ↗</a>
+    <a class="menu__item" href="index.html" role="menuitem" data-testid="tray-settings"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8 2 2 0 1 1-2.8 2.8 1.6 1.6 0 0 0-2.7 1.1 2 2 0 1 1-4 0 1.6 1.6 0 0 0-2.6-1.1 2 2 0 1 1-2.8-2.8A1.6 1.6 0 0 0 3 13.6a2 2 0 1 1 0-4A1.6 1.6 0 0 0 4.6 7a2 2 0 1 1 2.8-2.8A1.6 1.6 0 0 0 10 3.6a2 2 0 1 1 4 0 1.6 1.6 0 0 0 2.7 1.1 2 2 0 1 1 2.8 2.8A1.6 1.6 0 0 0 21 11a2 2 0 1 1 0 4 1.6 1.6 0 0 0-1.6 1Z"/></svg> Settings…</a>
+    <a class="menu__item" href="history.html" role="menuitem" data-testid="tray-history"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg> History…</a>
+    <!-- runtime: permission lost (toggle in scaffolding) -->
+    <div class="menu__sep"></div>
+    <div id="tray-perm-lost" data-testid="tray-perm-lost" hidden style="padding:10px 14px;display:flex;flex-direction:column;gap:6px">
+      <span style="color:var(--warning);font-size:12px;font-weight:600">⚠ Accessibility permission needed</span>
+      <a class="btn btn--sm" href="index.html" style="justify-content:center">Open System Settings</a>
+    </div>
+    <div class="menu__sep"></div>
+    <button class="menu__item" role="menuitem" data-testid="tray-quit" onclick="toast('Quitting redrafter…')"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg> Quit redrafter <span class="id">⌘Q</span></button>
+  </div>
+
+  <!-- CAPTURE PANEL on dimmed backdrop -->
+  <div class="capture-scrim">
+    <a class="btn btn--ghost" href="index.html" data-testid="capture-dismiss" aria-label="Dismiss" style="position:fixed;top:14px;left:20px">Esc</a>
+
+    <div class="cap" role="dialog" aria-modal="true" aria-label="redrafter capture" data-testid="capture-panel">
+      <div class="cap__top">
+        <span class="cap__badge" aria-hidden="true">R</span>
+        <h1 style="font-size:15px;font-weight:600;margin:0">Refine selection</h1>
+        <span class="cap__model chip mono" data-testid="capture-active-model"><span class="status-dot green"></span> claude-opus-4-6</span>
+      </div>
+
+      <!-- review scaffolding: switch between the states so each is visible/testable -->
+      <div class="cap__body" style="border-bottom:1px solid var(--border);padding-bottom:12px">
+        <div class="state-switch segmented" id="capture-state-switch" data-testid="capture-state-switch" aria-label="Capture states (wireframe)">
+          <button class="active" onclick="showCaptureState('input',this)">Input</button>
+          <button onclick="showCaptureState('refining',this)">Refining</button>
+          <button onclick="showCaptureState('done',this)">Done</button>
+          <button onclick="showCaptureState('review',this)">Review</button>
+          <button onclick="showCaptureState('edit',this)">Edit</button>
+          <button onclick="showCaptureState('error',this)">Error</button>
+          <button onclick="showCaptureState('perm-lost',this)">Perm lost</button>
+          <button onclick="showCaptureState('no-model',this)">No model</button>
+        </div>
+        <div class="state-switch segmented" data-testid="tray-status-switch" aria-label="Tray status (wireframe)" style="margin-top:8px">
+          <button class="active" onclick="setTrayStatus('idle',this)">Tray: Ready</button>
+          <button onclick="setTrayStatus('refining',this)">Tray: Refining</button>
+          <button onclick="setTrayStatus('perm-lost',this)">Tray: Perm lost</button>
+        </div>
+        <div class="state-switch segmented" data-testid="notification-switch" aria-label="OS notification (wireframe)" style="margin-top:8px">
+          <button class="active" onclick="showNotification('none',this)">Notif: none</button>
+          <button onclick="showNotification('complete',this)">Notif: complete</button>
+          <button onclick="showNotification('failure',this)">Notif: failure</button>
+        </div>
+        <div class="state-switch segmented" data-testid="hud-switch" aria-label="Cursor HUD (wireframe)" style="margin-top:8px">
+          <button class="active" onclick="showCursorHud('none',this)">HUD: off</button>
+          <button onclick="showCursorHud('refining',this)">HUD: refining</button>
+          <button onclick="showCursorHud('done',this)">HUD: done</button>
+        </div>
+      </div>
+
+      <!-- (a) INPUT + LIVE PARSE -->
+      <div data-capture-state="input">
+        <div class="cap__body" data-testid="capture-input">
+          <div class="cap__editor" role="group" aria-readonly="true" aria-label="Captured selection" tabindex="0" data-testid="capture-editor">
+            <span class="quote">&gt; On Mon, Alex wrote: are we still on track for Q3? any risk of slipping?</span>
+            <span class="tag tag--rd">/rd</span> read the quoted thread and refine my answer, keep it warm but concise
+            <span class="tag tag--m">/m</span> We're good with the Q3 release plan, no delays, engineers working hard, shipping by Monday
+          </div>
+          <div class="cap__parse" data-testid="capture-preview" aria-live="polite">
+            <span class="lbl">Parsed</span>
+            <span class="chip"><span class="tag tag--rd">/rd</span> direction</span>
+            <span class="chip"><span class="tag tag--m">/m</span> your message</span>
+            <span class="chip"><span class="tag tag--q">/q</span> quote detected · 1 block</span>
+            <span class="chip mono">lang: auto</span>
+          </div>
+          <!-- extra parse previews: /lang and a preset trigger -->
+          <div class="cap__parse" data-testid="capture-preview-lang" aria-live="polite">
+            <span class="lbl">e.g.</span>
+            <span class="mono tiny muted">…refine my answer <span class="tag tag--lang">/lang de</span></span>
+            <span class="chip"><span class="tag tag--lang">/lang de</span> output → German</span>
+          </div>
+          <div class="cap__parse" data-testid="capture-preview-preset">
+            <span class="lbl">e.g.</span>
+            <span class="mono tiny muted"><span class="tag tag--rd">/formal</span> attached is the report…</span>
+            <span class="chip"><span class="tag tag--rd">/formal</span> preset · formal rewrite</span>
+          </div>
+          <!-- compact command-syntax legend -->
+          <div class="cap__parse" data-testid="capture-legend" style="border-top:1px solid var(--border);margin-top:6px;padding-top:10px">
+            <span class="chip"><span class="tag tag--rd">/rd</span> direction</span>
+            <span class="chip"><span class="tag tag--m">/m</span> message</span>
+            <span class="chip"><span class="tag tag--q">/q</span> quote</span>
+            <span class="chip"><span class="tag tag--lang">/lang &lt;code&gt;</span> language</span>
+            <span class="chip"><span class="mono">/&lt;preset&gt;</span> saved preset</span>
+          </div>
+        </div>
+        <div class="cap__bar">
+          <span class="hint"><kbd>⌃⌥R</kbd> invoke · <kbd>Enter</kbd> refine · <kbd>Esc</kbd> cancel</span>
+          <span class="spacer"></span>
+          <button class="btn btn--primary" data-testid="capture-refine" onclick="showCaptureState('refining')">Refine</button>
+        </div>
+      </div>
+
+      <!-- (b) REFINING -->
+      <div data-capture-state="refining" hidden>
+        <div class="cap__body" data-testid="capture-refining">
+          <div style="display:flex;align-items:center;gap:12px;padding:14px 0"><span class="spinner" aria-hidden="true"></span> <span role="status">Refining with Claude…</span></div>
+          <p class="muted tiny" style="margin:0">Reading the quoted thread and refining your reply. Your text is untouched until it lands.</p>
+        </div>
+        <div class="cap__bar">
+          <span class="hint">Working…</span>
+          <span class="spacer"></span>
+          <button class="btn" data-testid="capture-cancel" onclick="showCaptureState('input')"><kbd style="border:none;padding:0;background:none">Esc</kbd> Cancel</button>
+        </div>
+      </div>
+
+      <!-- (c) DONE — BLIND INJECT -->
+      <div data-capture-state="done" hidden>
+        <div class="cap__body" data-testid="capture-done">
+          <div class="diff-block" style="margin-bottom:12px"><span class="lbl before">Original</span><div class="diff"><span class="diff__orig">we good with the Q3 release plan i think, no delays i hope, shipping monday probably</span></div></div>
+          <div class="diff-block"><span class="lbl after">Refined · pasted</span><div class="diff"><span class="diff__refined">We're good with the Q3 release plan — no delays. On track to ship Monday.</span></div></div>
+        </div>
+        <div class="cap__bar">
+          <span class="hint" style="color:var(--refined)"><svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 6"/></svg> Replaced · undo with <kbd>⌘Z</kbd></span>
+          <span class="spacer"></span>
+          <button class="btn" data-testid="capture-restore" onclick="toast('Original restored')">Restore original</button>
+        </div>
+      </div>
+
+      <!-- (d) REVIEW & CONFIRM -->
+      <div data-capture-state="review" hidden>
+        <div class="cap__body" data-testid="capture-review">
+          <div class="diff-block" style="margin-bottom:12px"><span class="lbl before">Original</span><div class="diff"><span class="diff__orig">we good with the Q3 release plan i think, no delays i hope, shipping monday probably</span></div></div>
+          <div class="diff-block"><span class="lbl after">Refined · review before pasting</span><div class="diff"><span class="diff__refined">We're good with the Q3 release plan — no delays. On track to ship Monday.</span></div></div>
+        </div>
+        <div class="cap__bar">
+          <span class="hint"><kbd>Enter</kbd> accept</span>
+          <span class="spacer"></span>
+          <button class="btn" data-testid="capture-discard" onclick="showCaptureState('input')">Discard</button>
+          <button class="btn" data-testid="capture-edit" onclick="showCaptureState('edit')">Edit</button>
+          <button class="btn btn--primary" data-testid="capture-accept" onclick="showCaptureState('done')">Accept &amp; paste</button>
+        </div>
+      </div>
+
+      <!-- (d2) EDIT REFINED TEXT before pasting -->
+      <div data-capture-state="edit" hidden>
+        <div class="cap__body" data-testid="capture-edit-state">
+          <div class="field">
+            <label for="capture-edit-field">Edit the refined text before pasting</label>
+            <textarea class="textarea" id="capture-edit-field" data-testid="capture-edit-field" rows="4">We're good with the Q3 release plan — no delays. On track to ship Monday.</textarea>
+          </div>
+          <p class="muted tiny" style="margin:8px 0 0">Your original selection is preserved until you accept.</p>
+        </div>
+        <div class="cap__bar">
+          <span class="hint"><kbd>⌘Enter</kbd> accept · <kbd>Esc</kbd> back</span>
+          <span class="spacer"></span>
+          <button class="btn" data-testid="capture-edit-cancel" onclick="showCaptureState('review')">Cancel</button>
+          <button class="btn btn--primary" data-testid="capture-edit-accept" onclick="showCaptureState('done')">Accept &amp; paste</button>
+        </div>
+      </div>
+
+      <!-- (e) ERROR -->
+      <div data-capture-state="error" hidden>
+        <div class="cap__body" data-testid="capture-error">
+          <div style="display:flex;align-items:flex-start;gap:11px">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--orig)" stroke-width="2" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+            <div>
+              <div style="font-weight:600;color:var(--orig)">Ollama unreachable</div>
+              <p class="muted tiny" style="margin:4px 0 0">Couldn't connect to <span class="mono">http://localhost:11434</span>. Your text is untouched.</p>
+            </div>
+          </div>
+        </div>
+        <div class="cap__bar">
+          <a class="btn btn--ghost btn--sm" href="models.html">Open model settings</a>
+          <span class="spacer"></span>
+          <button class="btn btn--primary" data-testid="capture-retry" onclick="showCaptureState('refining')">Retry</button>
+        </div>
+      </div>
+
+      <!-- (f) PERMISSION LOST at runtime -->
+      <div data-capture-state="perm-lost" hidden>
+        <div class="cap__body" data-testid="capture-perm-lost">
+          <div style="display:flex;align-items:flex-start;gap:11px">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--warning)" stroke-width="2" style="flex:none;margin-top:2px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M12 9v4M12 16h.01"/></svg>
+            <div>
+              <div style="font-weight:600;color:var(--warning)">Accessibility permission needed</div>
+              <p class="muted tiny" style="margin:4px 0 0">redrafter can no longer read your selection. Re-grant Accessibility to keep refining.</p>
+            </div>
+          </div>
+        </div>
+        <div class="cap__bar">
+          <span class="spacer"></span>
+          <a class="btn btn--primary" href="index.html" data-testid="capture-perm-open-settings">Open System Settings</a>
+        </div>
+      </div>
+
+      <!-- (g) NO ACTIVE MODEL -->
+      <div data-capture-state="no-model" hidden>
+        <div class="cap__body" data-testid="capture-no-model">
+          <div style="display:flex;align-items:flex-start;gap:11px">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--warning)" stroke-width="2" style="flex:none;margin-top:2px"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3"/></svg>
+            <div>
+              <div style="font-weight:600">No model selected</div>
+              <p class="muted tiny" style="margin:4px 0 0">Choose an active model before refining. Your text is untouched.</p>
+            </div>
+          </div>
+        </div>
+        <div class="cap__bar">
+          <span class="spacer"></span>
+          <a class="btn btn--primary" href="models.html" data-testid="capture-no-model-cta">Choose a model</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- OS NOTIFICATION MOCKS (macOS-style, top-right) -->
+  <div class="os-note" id="notification-complete" data-testid="notification-complete" hidden>
+    <span class="badge" aria-hidden="true">R</span>
+    <div style="flex:1"><div class="os-note__title">Refined with Claude ✓</div><div class="os-note__body">Pasted back in place · ⌘Z to undo</div></div>
+  </div>
+  <div class="os-note" id="notification-failure" data-testid="notification-failure" hidden style="border-color:var(--orig)">
+    <span class="badge" aria-hidden="true" style="background:var(--orig)">!</span>
+    <div style="flex:1"><div class="os-note__title">Ollama unreachable</div><div class="os-note__body">Your text is untouched.</div>
+      <button class="btn btn--sm" style="margin-top:8px" data-testid="notification-retry" onclick="toast('Retrying…')">Retry</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

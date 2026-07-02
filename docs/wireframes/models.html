@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Models</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Primary" data-testid="icon-rail">
+    <a class="rail__logo" href="index.html" aria-label="redrafter home" data-testid="rail-logo">R</a>
+    <a class="rail-btn" href="index.html" aria-label="General" title="General" data-testid="rail-general"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></a>
+    <a class="rail-btn" href="connections.html" aria-label="Connections" title="Connections" data-testid="rail-connections"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></a>
+    <a class="rail-btn active" href="models.html" aria-label="Models" title="Models" data-testid="rail-models"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></a>
+    <a class="rail-btn" href="behavior.html" aria-label="Behavior" title="Behavior" data-testid="rail-behavior"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></a>
+    <a class="rail-btn" href="presets.html" aria-label="Presets" title="Presets" data-testid="rail-presets"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></a>
+    <a class="rail-btn" href="history.html" aria-label="History" title="History" data-testid="rail-history"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></a>
+    <div class="rail__spacer"></div>
+    <a class="rail-btn" href="capture.html" aria-label="Capture demo" title="Capture (⌃⌥R)" data-testid="rail-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></a>
+    <button class="rail-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle light / dark" data-testid="theme-toggle"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+  </nav>
+
+  <aside class="sidebar" aria-label="Settings sections" data-testid="sidebar">
+    <div class="sidebar__head"><div class="app-name">redraft<span>er</span></div></div>
+    <a class="capture-btn" href="capture.html" data-testid="sidebar-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Capture selection <kbd>⌃⌥R</kbd></a>
+    <div class="sidebar__scroll">
+      <div class="nav-group" data-testid="group-settings">
+        <div class="nav-group__label">Settings</div>
+        <a class="nav-item" href="index.html" data-testid="nav-general"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="nav-item__label">General</span></a>
+        <a class="nav-item" href="connections.html" data-testid="nav-connections"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></span><span class="nav-item__label">Connections</span></a>
+        <a class="nav-item active" href="models.html" data-testid="nav-models"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><span class="nav-item__label">Models</span></a>
+        <a class="nav-item" href="behavior.html" data-testid="nav-behavior"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></span><span class="nav-item__label">Behavior</span></a>
+        <a class="nav-item" href="presets.html" data-testid="nav-presets"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span><span class="nav-item__label">Presets</span><span class="nav-item__count">4</span></a>
+        <a class="nav-item" href="history.html" data-testid="nav-history"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="nav-item__label">History</span><span class="nav-item__count">50</span></a>
+      </div>
+    </div>
+    <div class="sidebar__foot">
+      <a class="nav-item" href="models.html" data-testid="sidebar-active-model" style="border:1px solid var(--border)"><span class="status-dot green"></span><span class="nav-item__label mono">claude-opus-4-6</span><span class="mono tiny muted">active</span></a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 class="topbar__title">Models</h1>
+      <div class="topbar__spacer"></div>
+      <label class="search">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="models-search" data-testid="models-search" placeholder="Search models…" aria-label="Search models">
+      </label>
+      <div class="segmented" data-testid="models-state-switch" aria-label="View state (wireframe)">
+        <button class="active" onclick="setModelsState('normal',this)">Enabled</button>
+        <button onclick="setModelsState('empty',this)">None enabled</button>
+        <button onclick="setModelsState('no-active',this)">No active</button>
+        <button onclick="setModelsState('active-unavailable',this)">Active gone</button>
+      </div>
+    </header>
+    <div class="content" style="padding:0">
+      <div class="settings">
+
+        <!-- NO ACTIVE MODEL BANNER -->
+        <div class="grp" id="models-no-active-banner" data-testid="models-no-active-banner" hidden style="border-color:var(--warning);padding:12px 16px;display:flex;align-items:center;gap:12px">
+          <span class="status-dot amber"></span>
+          <div style="flex:1"><strong style="font-size:var(--fs-small)">No active model selected</strong><div class="muted tiny">Pick one below — redrafter can't refine without an active model.</div></div>
+        </div>
+
+        <!-- ACTIVE MODEL BECAME UNAVAILABLE BANNER -->
+        <div class="grp" id="models-active-unavailable" data-testid="model-active-unavailable" hidden style="border-color:var(--warning);padding:12px 16px;display:flex;align-items:center;gap:12px">
+          <span class="status-dot amber"></span>
+          <div style="flex:1"><strong style="font-size:var(--fs-small)">Your active model (<span class="mono">claude-opus-4-6</span>) is no longer available</strong><div class="muted tiny">Its connection or model was disabled. Pick a new active model below.</div></div>
+        </div>
+
+        <!-- ENABLED MODELS TABLE -->
+        <section class="sec" id="models-normal">
+          <h2 class="sec__title">Enabled models</h2>
+          <p class="muted tiny" style="margin:0 0 8px">Curated from your <a href="connections.html" style="color:var(--primary)">connections</a>. Set one as the global <strong>active</strong> model; ⭐ favorites float to the top of the menu-bar tray.</p>
+          <div class="grp" data-testid="models-table">
+            <table class="mtable" role="radiogroup" aria-label="Active model" data-testid="active-model">
+              <thead><tr><th style="width:44px">Active</th><th>Model</th><th>Provider</th><th style="width:110px">State</th><th style="width:44px">★</th><th style="width:40px"><span class="vh">Disable</span></th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><button class="radio-mark" role="radio" aria-checked="true" data-testid="model-active-radio-opus" aria-label="Set claude-opus-4-6 active" onclick="pickActiveModel(this)"></button></td>
+                  <td class="mono">claude-opus-4-6</td><td>Anthropic</td>
+                  <td><span class="run-state">cloud</span></td>
+                  <td><button class="star-btn" data-testid="model-favorite-opus" aria-pressed="true" aria-label="Favorite claude-opus-4-6" onclick="toggleStar(this)">★</button></td>
+                  <td><button class="btn btn--ghost btn--sm" data-testid="model-disable-opus" aria-label="Disable claude-opus-4-6" onclick="disableModel(this,'claude-opus-4-6')"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td><button class="radio-mark" role="radio" aria-checked="false" data-testid="model-active-radio-sonnet" aria-label="Set claude-sonnet-4-6 active" onclick="pickActiveModel(this)"></button></td>
+                  <td class="mono">claude-sonnet-4-6</td><td>Anthropic</td>
+                  <td><span class="run-state">cloud</span></td>
+                  <td><button class="star-btn" data-testid="model-favorite-sonnet" aria-pressed="true" aria-label="Favorite claude-sonnet-4-6" onclick="toggleStar(this)">★</button></td>
+                  <td><button class="btn btn--ghost btn--sm" data-testid="model-disable-sonnet" aria-label="Disable claude-sonnet-4-6" onclick="disableModel(this,'claude-sonnet-4-6')"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td><button class="radio-mark" role="radio" aria-checked="false" data-testid="model-active-radio-gpt" aria-label="Set gpt-5.1 active" onclick="pickActiveModel(this)"></button></td>
+                  <td class="mono">gpt-5.1</td><td>OpenAI</td>
+                  <td><span class="run-state">cloud</span></td>
+                  <td><button class="star-btn" data-testid="model-favorite-gpt" aria-pressed="false" aria-label="Favorite gpt-5.1" onclick="toggleStar(this)">☆</button></td>
+                  <td><button class="btn btn--ghost btn--sm" data-testid="model-disable-gpt" aria-label="Disable gpt-5.1" onclick="disableModel(this,'gpt-5.1')"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td><button class="radio-mark" role="radio" aria-checked="false" data-testid="model-active-radio-gemini" aria-label="Set gemini-1.5-flash active" onclick="pickActiveModel(this)"></button></td>
+                  <td class="mono">gemini-1.5-flash</td><td>Google</td>
+                  <td><span class="run-state">cloud</span></td>
+                  <td><button class="star-btn" data-testid="model-favorite-gemini" aria-pressed="false" aria-label="Favorite gemini-1.5-flash" onclick="toggleStar(this)">☆</button></td>
+                  <td><button class="btn btn--ghost btn--sm" data-testid="model-disable-gemini" aria-label="Disable gemini-1.5-flash" onclick="disableModel(this,'gemini-1.5-flash')"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td><button class="radio-mark" role="radio" aria-checked="false" data-testid="model-active-radio-qwen" aria-label="Set qwen3:8b active" onclick="pickActiveModel(this)"></button></td>
+                  <td class="mono">qwen3:8b</td><td>Ollama</td>
+                  <td><span class="run-state running" data-testid="model-run-qwen">● running</span></td>
+                  <td><button class="star-btn" data-testid="model-favorite-qwen" aria-pressed="true" aria-label="Favorite qwen3:8b" onclick="toggleStar(this)">★</button></td>
+                  <td><button class="btn btn--ghost btn--sm" data-testid="model-disable-qwen" aria-label="Disable qwen3:8b" onclick="disableModel(this,'qwen3:8b')"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td>
+                </tr>
+                <tr>
+                  <td><button class="radio-mark" role="radio" aria-checked="false" data-testid="model-active-radio-llama" aria-label="Set llama3.1:8b active" onclick="pickActiveModel(this)"></button></td>
+                  <td class="mono">llama3.1:8b</td><td>Ollama</td>
+                  <td><span class="run-state" data-testid="model-run-llama">○ available</span></td>
+                  <td><button class="star-btn" data-testid="model-favorite-llama" aria-pressed="false" aria-label="Favorite llama3.1:8b" onclick="toggleStar(this)">☆</button></td>
+                  <td><button class="btn btn--ghost btn--sm" data-testid="model-disable-llama" aria-label="Disable llama3.1:8b" onclick="disableModel(this,'llama3.1:8b')"><svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- NONE ENABLED EMPTY STATE -->
+        <section class="sec" id="models-empty-sec" hidden>
+          <div class="grp"><div class="empty" data-testid="models-empty">
+            <div class="empty__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></div>
+            <p style="font-size:16px;color:var(--text);margin:0 0 6px">No models enabled</p>
+            <p class="muted" style="margin:0 0 16px">Connect a provider and enable models to get started.</p>
+            <a class="btn btn--primary" href="connections.html">Add one in Connections</a>
+          </div></div>
+        </section>
+
+        <!-- OLLAMA: GET MORE MODELS -->
+        <section class="sec" id="ollama-pull-sec">
+          <h2 class="sec__title"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg> Get more Ollama models</h2>
+          <p class="muted tiny" style="margin:0 0 8px">Pull a model to run locally. Uses <span class="mono">POST /api/pull</span>.</p>
+          <div class="grp" style="padding:14px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <input class="input mono" id="ollama-pull-field" data-testid="ollama-pull-field" placeholder="llama3.2  ·  mistral  ·  phi4" style="flex:1;min-width:180px">
+              <button class="btn btn--primary btn--sm" data-testid="ollama-pull-start" onclick="ollamaPull('pulling')">Pull</button>
+              <div class="segmented" data-testid="ollama-pull-switch" aria-label="Pull state (wireframe)">
+                <button class="active" onclick="ollamaPull('idle',this)">Idle</button>
+                <button onclick="ollamaPull('pulling',this)">Pulling</button>
+                <button onclick="ollamaPull('done',this)">Done</button>
+                <button onclick="ollamaPull('error',this)">Error</button>
+              </div>
+            </div>
+            <div style="margin-top:12px">
+              <div id="ollama-pull-idle" class="muted tiny" data-testid="ollama-pull-idle">No download in progress.</div>
+              <div id="ollama-pull-progress" data-testid="ollama-pull-progress" hidden>
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span class="mono">pulling llama3.2</span><span class="mono muted">62%</span></div>
+                <div class="pbar" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Pulling llama3.2"><i></i></div>
+              </div>
+              <div id="ollama-pull-done" class="chip ok" data-testid="ollama-pull-done" hidden><span class="status-dot green"></span> llama3.2 pulled · now available</div>
+              <div id="ollama-pull-error" class="chip err" data-testid="ollama-pull-error" hidden><span class="status-dot red"></span> pull failed · model not found in registry</div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+/* redrafter — Design Tokens
+   Warm-neutral dark greys, dark-first. Accent = muted INDIGO.
+   Red-ish / green-ish are RESERVED for the redraft diff (original vs refined) + error/success.
+   Dark-first: :root = dark. html.light overrides (toggle persisted to localStorage "rd-theme").
+   Fonts: Source Sans 3 (UI) + JetBrains Mono (command tokens, model ids, TOML). */
+
+:root {
+  /* Accent ramp (indigo) */
+  --accent-400: #8A8FE8;
+  --accent-500: #7B80E0;
+  --accent-600: #6167CF;
+
+  --primary:       #7B80E0;
+  --primary-hover: #9297EC;
+  --accent-soft:   rgba(123, 128, 224, 0.18);
+
+  /* Dark theme (default) — warm-neutral greys */
+  --bg:             #2B2B2B;
+  --surface:        #232323;
+  --surface-raised: #3A3A3A;
+  --border:         #3A3A3A;
+  --border-subtle:  #4A4A4A;
+  --text:           #E0E0E0;
+  --text-secondary: #9E9E9E;
+  --text-tertiary:  #949494;  /* lifted from #6E6E6E to clear 4.5:1 on --bg for small text */
+  --hover:          #2A2A2A;
+  --active-accent:  rgba(123, 128, 224, 0.18);
+
+  /* Semantic */
+  --success: #4CAF50;
+  --error:   #F44336;
+  --warning: #FF9800;
+  --info:    #60A5FA;
+
+  /* Redraft diff — SIGNATURE duotone (original struck vs refined result) */
+  --orig:        #E8705F;                 /* original / before / destructive */
+  --orig-soft:   rgba(232, 112, 95, 0.16);
+  --refined:     #46B98C;                 /* refined / after / accepted */
+  --refined-soft:rgba(70, 185, 140, 0.18);
+
+  /* Command-tag hues (kept off the diff duotone) */
+  --tag-rd:   var(--primary);   /* direction */
+  --tag-m:    var(--info);      /* message */
+  --tag-q:    var(--text-secondary); /* quote */
+  --tag-lang: var(--warning);   /* language */
+
+  /* Radii */
+  --radius-sm: 7px;
+  --radius:    10px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+
+  /* Layout */
+  --rail-w:    56px;
+  --sidebar-w: 260px;
+
+  /* Typography */
+  --font-body: "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-display: 30px;
+  --fs-h1: 24px;
+  --fs-h2: 18px;
+  --fs-body: 15px;
+  --fs-small: 14px;
+  --fs-caption: 12px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-md: 0 6px 24px rgba(0,0,0,.35);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,.5);
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--primary);
+  --scrollbar-thumb: #4A4A4A;
+}
+
+html.light {
+  --primary:       #5B60C9;
+  --primary-hover: #4A4FB3;
+  --accent-soft:   rgba(91, 96, 201, 0.12);
+  --active-accent: rgba(91, 96, 201, 0.12);
+
+  --bg:             #F3F4F6;
+  --surface:        #FFFFFF;
+  --surface-raised: #FFFFFF;
+  --border:         #E4E7EC;
+  --border-subtle:  #D3D8DF;
+  --text:           #1E2430;
+  --text-secondary: #525C6B;
+  --text-tertiary:  #79828F;
+  --hover:          #EDEFF3;
+
+  --orig:        #C74B3B;
+  --orig-soft:   rgba(199, 75, 59, 0.10);
+  --refined:     #2E9B72;
+  --refined-soft:rgba(46, 155, 114, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(20,30,50,.05);
+  --shadow-md: 0 6px 22px rgba(20,30,50,.10);
+  --shadow-lg: 0 16px 40px rgba(20,30,50,.16);
+
+  --scrollbar-thumb: #D3D8DF;
+}

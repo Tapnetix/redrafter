@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — History</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Primary" data-testid="icon-rail">
+    <a class="rail__logo" href="index.html" aria-label="redrafter home" data-testid="rail-logo">R</a>
+    <a class="rail-btn" href="index.html" aria-label="General" title="General" data-testid="rail-general"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></a>
+    <a class="rail-btn" href="connections.html" aria-label="Connections" title="Connections" data-testid="rail-connections"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></a>
+    <a class="rail-btn" href="models.html" aria-label="Models" title="Models" data-testid="rail-models"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></a>
+    <a class="rail-btn" href="behavior.html" aria-label="Behavior" title="Behavior" data-testid="rail-behavior"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></a>
+    <a class="rail-btn" href="presets.html" aria-label="Presets" title="Presets" data-testid="rail-presets"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></a>
+    <a class="rail-btn active" href="history.html" aria-label="History" title="History" data-testid="rail-history"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></a>
+    <div class="rail__spacer"></div>
+    <a class="rail-btn" href="capture.html" aria-label="Capture demo" title="Capture (⌃⌥R)" data-testid="rail-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></a>
+    <button class="rail-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle light / dark" data-testid="theme-toggle"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+  </nav>
+
+  <aside class="sidebar" aria-label="Settings sections" data-testid="sidebar">
+    <div class="sidebar__head"><div class="app-name">redraft<span>er</span></div></div>
+    <a class="capture-btn" href="capture.html" data-testid="sidebar-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Capture selection <kbd>⌃⌥R</kbd></a>
+    <div class="sidebar__scroll">
+      <div class="nav-group" data-testid="group-settings">
+        <div class="nav-group__label">Settings</div>
+        <a class="nav-item" href="index.html" data-testid="nav-general"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="nav-item__label">General</span></a>
+        <a class="nav-item" href="connections.html" data-testid="nav-connections"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></span><span class="nav-item__label">Connections</span></a>
+        <a class="nav-item" href="models.html" data-testid="nav-models"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><span class="nav-item__label">Models</span></a>
+        <a class="nav-item" href="behavior.html" data-testid="nav-behavior"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></span><span class="nav-item__label">Behavior</span></a>
+        <a class="nav-item" href="presets.html" data-testid="nav-presets"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span><span class="nav-item__label">Presets</span><span class="nav-item__count">4</span></a>
+        <a class="nav-item active" href="history.html" data-testid="nav-history"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="nav-item__label">History</span><span class="nav-item__count">50</span></a>
+      </div>
+    </div>
+    <div class="sidebar__foot">
+      <a class="nav-item" href="models.html" data-testid="sidebar-active-model" style="border:1px solid var(--border)"><span class="status-dot green"></span><span class="nav-item__label mono">claude-opus-4-6</span><span class="mono tiny muted">active</span></a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 class="topbar__title">History <span class="count">· 50</span></h1>
+      <div class="topbar__spacer"></div>
+      <label class="search">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="history-search" data-testid="history-search" placeholder="Search refinements…" aria-label="Search history" oninput="historySearch(this.value)">
+      </label>
+      <button class="btn btn--sm btn--danger" data-testid="history-clear" onclick="openModal('history-clear-modal')">Clear history</button>
+    </header>
+
+    <div class="toolbar">
+      <span class="muted tiny">View state:</span>
+      <div class="segmented" id="history-state-switch" data-testid="history-state-switch" aria-label="Demo state">
+        <button class="active" data-testid="state-populated" onclick="setHistoryState('populated',this)">Populated</button>
+        <button data-testid="state-empty" onclick="setHistoryState('empty',this)">Empty</button>
+        <button data-testid="state-noresults" onclick="setHistoryState('no-results',this)">No results</button>
+      </div>
+      <div class="toolbar__spacer"></div>
+      <span class="muted tiny mono" data-testid="retention-note">retention: keep 50 · purge 7d</span>
+    </div>
+
+    <div class="content">
+
+      <!-- POPULATED LIST -->
+      <div class="grp list" id="history-list" data-testid="history-list">
+
+        <article class="hrow" data-testid="history-row">
+          <div class="hrow__main">
+            <div class="hrow__meta"><span class="mono tiny muted">2 min ago</span><span class="chip mono">claude-sonnet-4-6</span><span class="chip">Slack · #q3-launch</span></div>
+            <div class="diff trunc"><span class="diff__orig">we good with the Q3 release plan i think, no delays i hope, shipping monday probably</span> <span class="diff__arrow">→</span> <span class="diff__refined">We're good with the Q3 release plan — no delays. On track to ship Monday.</span></div>
+          </div>
+          <div class="hrow__actions">
+            <button class="btn btn--sm" data-testid="history-view" aria-label="View full refinement" onclick="openModal('history-detail')">View</button>
+            <button class="btn btn--sm" data-testid="history-restore" onclick="toast('Original restored')">Restore original</button>
+            <button class="btn btn--sm" data-testid="history-rerefine" aria-haspopup="true" aria-expanded="false" onclick="toggleRerefine(event,this)">Re-refine ▾</button>
+            <div class="popover" hidden role="menu" aria-label="Re-refine with" style="right:44px;top:36px">
+              <div class="popover__title">Re-run with model</div>
+              <button class="menu__item" role="menuitem" data-testid="rerefine-model-qwen3" onclick="rerefineWith('qwen3:8b')"><span class="mono">qwen3:8b</span></button>
+              <button class="menu__item" role="menuitem" data-testid="rerefine-model-claude" onclick="rerefineWith('claude-sonnet-4-6')"><span class="mono">claude-sonnet-4-6</span></button>
+              <button class="menu__item" role="menuitem" data-testid="rerefine-model-gemini" onclick="rerefineWith('gemini-1.5-flash')"><span class="mono">gemini-1.5-flash</span></button>
+              <div class="menu__sep"></div>
+              <div class="popover__title">Or with preset</div>
+              <button class="menu__item" role="menuitem" data-testid="rerefine-preset-formal" onclick="rerefineWith('/formal')"><span class="mono">/formal</span></button>
+              <button class="menu__item" role="menuitem" data-testid="rerefine-preset-exec-summary" onclick="rerefineWith('/exec-summary')"><span class="mono">/exec-summary</span></button>
+            </div>
+            <button class="btn btn--sm" data-testid="history-copy" aria-label="Copy refined text" onclick="toast('Copied refined text')">Copy</button>
+          </div>
+        </article>
+
+        <article class="hrow" data-testid="history-row">
+          <div class="hrow__main">
+            <div class="hrow__meta"><span class="mono tiny muted">18 min ago</span><span class="chip mono">qwen3:8b</span><span class="chip">Mail · reply</span><span class="tag tag--rd">/rd</span></div>
+            <div class="diff trunc"><span class="diff__orig">hi sarah just checking in on the invoice, did it get sent? lmk thanks</span> <span class="diff__arrow">→</span> <span class="diff__refined">Hi Sarah — just following up on the invoice. Could you confirm whether it went out? Thanks!</span></div>
+          </div>
+          <div class="hrow__actions">
+            <button class="btn btn--sm" data-testid="history-view" aria-label="View full refinement" onclick="openModal('history-detail')">View</button>
+            <button class="btn btn--sm" data-testid="history-restore" onclick="toast('Original restored')">Restore original</button>
+            <button class="btn btn--sm" data-testid="history-rerefine" aria-haspopup="true" aria-expanded="false" onclick="toggleRerefine(event,this)">Re-refine ▾</button>
+            <div class="popover" hidden role="menu" aria-label="Re-refine with" style="right:44px;top:36px">
+              <div class="popover__title">Re-run with model</div>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('qwen3:8b')"><span class="mono">qwen3:8b</span></button>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('claude-sonnet-4-6')"><span class="mono">claude-sonnet-4-6</span></button>
+            </div>
+            <button class="btn btn--sm" data-testid="history-copy" aria-label="Copy refined text" onclick="toast('Copied refined text')">Copy</button>
+          </div>
+        </article>
+
+        <article class="hrow" data-testid="history-row">
+          <div class="hrow__main">
+            <div class="hrow__meta"><span class="mono tiny muted">1 hr ago</span><span class="chip mono">claude-sonnet-4-6</span><span class="chip">Mail · reply</span><span class="tag tag--lang">/lang de</span></div>
+            <div class="diff trunc"><span class="diff__orig">thanks, sounds good, i'll check the numbers and get back to you tomorrow</span> <span class="diff__arrow">→</span> <span class="diff__refined">Danke, klingt gut! Ich prüfe die Zahlen und melde mich morgen bei dir.</span></div>
+          </div>
+          <div class="hrow__actions">
+            <button class="btn btn--sm" data-testid="history-view" aria-label="View full refinement" onclick="openModal('history-detail')">View</button>
+            <button class="btn btn--sm" data-testid="history-restore" onclick="toast('Original restored')">Restore original</button>
+            <button class="btn btn--sm" data-testid="history-rerefine" aria-haspopup="true" aria-expanded="false" onclick="toggleRerefine(event,this)">Re-refine ▾</button>
+            <div class="popover" hidden role="menu" aria-label="Re-refine with" style="right:44px;top:36px">
+              <div class="popover__title">Re-run with model</div>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('qwen3:8b')"><span class="mono">qwen3:8b</span></button>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('gemini-1.5-flash')"><span class="mono">gemini-1.5-flash</span></button>
+            </div>
+            <button class="btn btn--sm" data-testid="history-copy" aria-label="Copy refined text" onclick="toast('Copied refined text')">Copy</button>
+          </div>
+        </article>
+
+        <article class="hrow" data-testid="history-row">
+          <div class="hrow__main">
+            <div class="hrow__meta"><span class="mono tiny muted">Yesterday · 16:12</span><span class="chip mono">gemini-2.5-pro</span><span class="chip">Notion · doc</span><span class="tag tag--q">/q</span></div>
+            <div class="diff trunc"><span class="diff__orig">the migration went ok mostly, few hiccups with the db but nothing major we sorted it</span> <span class="diff__arrow">→</span> <span class="diff__refined">The migration went smoothly overall. We hit a few minor database hiccups but resolved them without impact.</span></div>
+          </div>
+          <div class="hrow__actions">
+            <button class="btn btn--sm" data-testid="history-view" aria-label="View full refinement" onclick="openModal('history-detail')">View</button>
+            <button class="btn btn--sm" data-testid="history-restore" onclick="toast('Original restored')">Restore original</button>
+            <button class="btn btn--sm" data-testid="history-rerefine" aria-haspopup="true" aria-expanded="false" onclick="toggleRerefine(event,this)">Re-refine ▾</button>
+            <div class="popover" hidden role="menu" aria-label="Re-refine with" style="right:44px;top:36px">
+              <div class="popover__title">Re-run with model</div>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('claude-sonnet-4-6')"><span class="mono">claude-sonnet-4-6</span></button>
+            </div>
+            <button class="btn btn--sm" data-testid="history-copy" aria-label="Copy refined text" onclick="toast('Copied refined text')">Copy</button>
+          </div>
+        </article>
+
+        <article class="hrow" data-testid="history-row">
+          <div class="hrow__main">
+            <div class="hrow__meta"><span class="mono tiny muted">Yesterday · 09:03</span><span class="chip mono">qwen3:8b</span><span class="chip">Slack · standup</span><span class="tag tag--m">/m</span></div>
+            <div class="diff trunc"><span class="diff__orig">yesterday finished the auth refactor, today starting on the billing page, no blockers rn</span> <span class="diff__arrow">→</span> <span class="diff__refined">Yesterday: finished the auth refactor. Today: starting the billing page. Blockers: none.</span></div>
+          </div>
+          <div class="hrow__actions">
+            <button class="btn btn--sm" data-testid="history-view" aria-label="View full refinement" onclick="openModal('history-detail')">View</button>
+            <button class="btn btn--sm" data-testid="history-restore" onclick="toast('Original restored')">Restore original</button>
+            <button class="btn btn--sm" data-testid="history-rerefine" aria-haspopup="true" aria-expanded="false" onclick="toggleRerefine(event,this)">Re-refine ▾</button>
+            <div class="popover" hidden role="menu" aria-label="Re-refine with" style="right:44px;top:36px">
+              <div class="popover__title">Re-run with model</div>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('qwen3:8b')"><span class="mono">qwen3:8b</span></button>
+            </div>
+            <button class="btn btn--sm" data-testid="history-copy" aria-label="Copy refined text" onclick="toast('Copied refined text')">Copy</button>
+          </div>
+        </article>
+
+        <article class="hrow" data-testid="history-row">
+          <div class="hrow__main">
+            <div class="hrow__meta"><span class="mono tiny muted">Mon · 14:40</span><span class="chip mono">gpt-4o</span><span class="chip">Docs · comment</span></div>
+            <div class="diff trunc"><span class="diff__orig">lgtm ship it, maybe double check the edge case with empty input tho</span> <span class="diff__arrow">→</span> <span class="diff__refined">Looks good to me — ship it. Let's just double-check the empty-input edge case first.</span></div>
+          </div>
+          <div class="hrow__actions">
+            <button class="btn btn--sm" data-testid="history-view" aria-label="View full refinement" onclick="openModal('history-detail')">View</button>
+            <button class="btn btn--sm" data-testid="history-restore" onclick="toast('Original restored')">Restore original</button>
+            <button class="btn btn--sm" data-testid="history-rerefine" aria-haspopup="true" aria-expanded="false" onclick="toggleRerefine(event,this)">Re-refine ▾</button>
+            <div class="popover" hidden role="menu" aria-label="Re-refine with" style="right:44px;top:36px">
+              <div class="popover__title">Re-run with model</div>
+              <button class="menu__item" role="menuitem" onclick="rerefineWith('gpt-5.1')"><span class="mono">gpt-5.1</span></button>
+            </div>
+            <button class="btn btn--sm" data-testid="history-copy" aria-label="Copy refined text" onclick="toast('Copied refined text')">Copy</button>
+          </div>
+        </article>
+
+      </div>
+
+      <!-- EMPTY STATE -->
+      <div class="empty" id="history-empty" data-testid="history-empty" hidden>
+        <div class="empty__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></div>
+        <p style="font-size:16px;color:var(--text);margin:0 0 6px">No refinements yet</p>
+        <p class="muted" style="margin:0">Select text in any app and press <kbd>⌃⌥R</kbd> — your redrafts will show up here.</p>
+      </div>
+
+      <!-- NO-RESULTS STATE -->
+      <div class="empty" id="history-no-results" data-testid="history-no-results" hidden>
+        <div class="empty__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div>
+        <p style="font-size:16px;color:var(--text);margin:0 0 6px">No matches</p>
+        <p class="muted" style="margin:0">Nothing in your history matches that search. Try a different term.</p>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- FULL REFINEMENT DETAIL -->
+<div class="modal-back" id="history-detail" role="dialog" aria-modal="true" aria-labelledby="history-detail-title" data-testid="history-detail">
+  <div class="modal" style="width:560px">
+    <h2 class="modal__title" id="history-detail-title">Refinement detail</h2>
+    <div class="hrow__meta" style="margin-bottom:14px"><span class="mono tiny muted">2 min ago</span><span class="chip mono">claude-sonnet-4-6</span><span class="chip">Slack · #q3-launch</span></div>
+    <div class="diff-block" style="margin-bottom:14px">
+      <span class="lbl before">Original</span>
+      <div class="diff" data-testid="history-detail-original"><span class="diff__orig">we good with the Q3 release plan i think, no delays i hope, the engineers are working super hard and we should ship monday probably, will keep everyone posted if anything changes</span></div>
+    </div>
+    <div class="diff-block">
+      <span class="lbl after">Refined</span>
+      <div class="diff" data-testid="history-detail-refined"><span class="diff__refined">We're good with the Q3 release plan — no delays. The engineers are working hard and we're on track to ship Monday. I'll keep everyone posted if anything changes.</span></div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn" onclick="closeModal('history-detail')">Close</button>
+      <button class="btn" data-testid="history-detail-restore" onclick="closeModal('history-detail');toast('Original restored')">Restore original</button>
+      <button class="btn btn--primary" data-testid="history-detail-copy" onclick="toast('Copied refined text')">Copy refined</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLEAR HISTORY CONFIRM -->
+<div class="modal-back" id="history-clear-modal" role="alertdialog" aria-modal="true" aria-labelledby="clear-title" data-testid="history-clear-modal">
+  <div class="modal" style="width:400px">
+    <h2 class="modal__title" id="clear-title">Clear history?</h2>
+    <p class="muted" style="font-size:var(--fs-small);margin:0">Delete all <strong>50 entries</strong>? This can't be undone — originals you haven't restored will be gone for good.</p>
+    <div class="modal__foot">
+      <button class="btn" onclick="closeModal('history-clear-modal')">Cancel</button>
+      <button class="btn btn--primary btn--danger" style="background:var(--error);border-color:var(--error);color:#fff" data-testid="history-clear-confirm" onclick="closeModal('history-clear-modal');setHistoryState('empty');toast('History cleared')">Delete all 50</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Behavior</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Primary" data-testid="icon-rail">
+    <a class="rail__logo" href="index.html" aria-label="redrafter home" data-testid="rail-logo">R</a>
+    <a class="rail-btn" href="index.html" aria-label="General" title="General" data-testid="rail-general"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></a>
+    <a class="rail-btn" href="connections.html" aria-label="Connections" title="Connections" data-testid="rail-connections"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></a>
+    <a class="rail-btn" href="models.html" aria-label="Models" title="Models" data-testid="rail-models"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></a>
+    <a class="rail-btn active" href="behavior.html" aria-label="Behavior" title="Behavior" data-testid="rail-behavior"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></a>
+    <a class="rail-btn" href="presets.html" aria-label="Presets" title="Presets" data-testid="rail-presets"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></a>
+    <a class="rail-btn" href="history.html" aria-label="History" title="History" data-testid="rail-history"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></a>
+    <div class="rail__spacer"></div>
+    <a class="rail-btn" href="capture.html" aria-label="Capture demo" title="Capture (⌃⌥R)" data-testid="rail-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></a>
+    <button class="rail-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle light / dark" data-testid="theme-toggle"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+  </nav>
+
+  <aside class="sidebar" aria-label="Settings sections" data-testid="sidebar">
+    <div class="sidebar__head"><div class="app-name">redraft<span>er</span></div></div>
+    <a class="capture-btn" href="capture.html" data-testid="sidebar-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Capture selection <kbd>⌃⌥R</kbd></a>
+    <div class="sidebar__scroll">
+      <div class="nav-group" data-testid="group-settings">
+        <div class="nav-group__label">Settings</div>
+        <a class="nav-item" href="index.html" data-testid="nav-general"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="nav-item__label">General</span></a>
+        <a class="nav-item" href="connections.html" data-testid="nav-connections"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></span><span class="nav-item__label">Connections</span></a>
+        <a class="nav-item" href="models.html" data-testid="nav-models"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><span class="nav-item__label">Models</span></a>
+        <a class="nav-item active" href="behavior.html" data-testid="nav-behavior"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></span><span class="nav-item__label">Behavior</span></a>
+        <a class="nav-item" href="presets.html" data-testid="nav-presets"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span><span class="nav-item__label">Presets</span><span class="nav-item__count">4</span></a>
+        <a class="nav-item" href="history.html" data-testid="nav-history"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="nav-item__label">History</span><span class="nav-item__count">50</span></a>
+      </div>
+    </div>
+    <div class="sidebar__foot">
+      <a class="nav-item" href="models.html" data-testid="sidebar-active-model" style="border:1px solid var(--border)"><span class="status-dot green"></span><span class="nav-item__label mono">claude-opus-4-6</span><span class="mono tiny muted">active</span></a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar"><h1 class="topbar__title">Behavior</h1></header>
+    <div class="content" style="padding:0">
+      <div class="settings">
+
+        <!-- DEFAULT DIRECTION -->
+        <section class="sec">
+          <h2 class="sec__title">Default direction</h2>
+          <p class="muted tiny" style="margin:0 0 8px">Applied to every selection with no inline <span class="tag tag--rd">/rd</span> command. Your baseline voice.</p>
+          <div class="grp" style="padding:14px">
+            <label class="vh" for="default-direction">Default direction</label>
+            <textarea class="textarea" id="default-direction" data-testid="default-direction" rows="3">Fix grammar, spelling and clarity — keep my voice, tone and length.</textarea>
+            <p class="muted tiny" data-testid="default-language-note" style="margin:8px 0 0">Output language: same as your text — use <span class="tag tag--lang">/lang</span> or a preset to translate.</p>
+          </div>
+        </section>
+
+        <!-- INJECT MODE -->
+        <section class="sec">
+          <h2 class="sec__title">Inject mode</h2>
+          <div class="grp">
+            <div class="opt">
+              <div class="opt__main"><div class="opt__name">How the refined text lands</div><div class="opt__desc"><strong>Blind</strong> replaces instantly. <strong>Review &amp; confirm</strong> shows the diff first so you can Accept, Edit or Discard.</div></div>
+              <div class="opt__ctrl"><div class="segmented" role="radiogroup" aria-label="Inject mode" data-testid="inject-mode">
+                <button class="active" role="radio" aria-checked="true" data-testid="inject-mode-blind" onclick="[].forEach.call(this.parentElement.children,function(b){b.classList.remove('active');b.setAttribute('aria-checked','false')});this.classList.add('active');this.setAttribute('aria-checked','true')">Blind (instant)</button>
+                <button role="radio" aria-checked="false" data-testid="inject-mode-review" onclick="[].forEach.call(this.parentElement.children,function(b){b.classList.remove('active');b.setAttribute('aria-checked','false')});this.classList.add('active');this.setAttribute('aria-checked','true')">Review &amp; confirm</button>
+              </div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- QUOTE BEHAVIOR -->
+        <section class="sec">
+          <h2 class="sec__title">When the selection has a quote</h2>
+          <p class="muted tiny" style="margin:0 0 8px">Quoted context (lines starting <span class="mono">&gt;</span>, “On … wrote:”, signatures) is detected automatically or marked with <span class="tag tag--q">/q</span>.</p>
+          <div class="grp" style="padding:14px">
+            <div class="seg" data-testid="quote-behavior">
+              <input type="radio" name="quote" id="q-answer" data-testid="quote-answer"><label for="q-answer">Answer only</label>
+              <input type="radio" name="quote" id="q-answerquote" data-testid="quote-answer-quote" checked><label for="q-answerquote">Answer + quote</label>
+              <input type="radio" name="quote" id="q-rd" data-testid="quote-rd"><label for="q-rd">Let /rd decide</label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ON FAILURE -->
+        <section class="sec">
+          <h2 class="sec__title">On failure</h2>
+          <p class="muted tiny" style="margin:0 0 8px">If the model is unreachable, times out, or returns empty.</p>
+          <div class="grp" style="padding:14px" data-testid="failure-mode">
+            <div class="opt-row">
+              <input type="radio" name="fail" id="fail-notify" data-testid="failure-notify" checked>
+              <label for="fail-notify"><strong>Notify, keep text.</strong> Show the error and leave your selection untouched.</label>
+            </div>
+            <div class="opt-row">
+              <input type="radio" name="fail" id="fail-fallback" data-testid="failure-fallback">
+              <label for="fail-fallback"><strong>Fall back through a chain,</strong> then notify if all fail.</label>
+            </div>
+            <!-- ordered fallback chain -->
+            <div id="failure-fallback-chain" data-testid="failure-fallback-chain" style="margin:8px 0 0 26px;display:flex;flex-direction:column;gap:8px">
+              <div class="opt-row" style="padding:0;align-items:center;gap:8px" data-testid="failure-fallback-1">
+                <span class="mono tiny muted" style="width:16px">1.</span>
+                <select class="input mono" aria-label="Fallback model 1" data-model-options style="min-width:160px"></select>
+                <button type="button" class="btn btn--ghost btn--sm" data-testid="failure-fallback-remove" aria-label="Remove fallback" onclick="this.parentElement.remove()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              </div>
+              <div class="opt-row" style="padding:0;align-items:center;gap:8px" data-testid="failure-fallback-2">
+                <span class="mono tiny muted" style="width:16px">2.</span>
+                <select class="input mono" aria-label="Fallback model 2" data-model-options style="min-width:160px"></select>
+                <button type="button" class="btn btn--ghost btn--sm" data-testid="failure-fallback-remove" aria-label="Remove fallback" onclick="this.parentElement.remove()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              </div>
+              <!-- stale/disconnected fallback row (toggleable via scaffolding) -->
+              <div class="opt-row" style="padding:0;align-items:center;gap:8px" data-testid="failure-fallback-stale" hidden>
+                <span class="mono tiny muted" style="width:16px">3.</span>
+                <span class="chip warn" style="flex:1"><span class="status-dot amber"></span> <span class="mono">gpt-5.1</span> · connection disabled — will be skipped</span>
+                <button type="button" class="btn btn--ghost btn--sm" aria-label="Remove fallback" onclick="this.parentElement.remove()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              </div>
+            </div>
+            <div class="demo-scaffold" data-testid="failure-fallback-stale-switch" aria-label="Wireframe demo fallback state" style="margin-left:26px">
+              <span class="demo-scaffold__label">Wireframe demo · stale fallback:</span>
+              <button type="button" class="active" onclick="toggleFallbackStale(false,this)">Hide</button>
+              <button type="button" onclick="toggleFallbackStale(true,this)">Show</button>
+            </div>
+            <div style="margin:8px 0 0 26px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <button type="button" class="btn btn--ghost btn--sm" data-testid="failure-fallback-add" onclick="addFallback()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg> Add fallback</button>
+              <label style="display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-small);flex:0 0 auto"><span style="white-space:nowrap">retries per model</span>
+                <select class="input" aria-label="Retry count" data-testid="failure-retry-count" style="min-width:64px"><option>1</option><option>2</option><option>3</option></select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- HISTORY RETENTION -->
+        <section class="sec">
+          <h2 class="sec__title">History retention</h2>
+          <div class="grp" style="padding:14px" data-testid="history-retention">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:var(--fs-small)">
+              <span>Keep</span>
+              <label class="vh" for="ret-count">Entries to keep</label>
+              <select class="input" id="ret-count" data-testid="retention-count" style="min-width:90px"><option>25</option><option selected>50</option><option>200</option><option>Unlimited</option></select>
+              <span>entries · auto-purge after</span>
+              <label class="vh" for="ret-days">Days before purge</label>
+              <select class="input" id="ret-days" data-testid="retention-days" style="min-width:70px"><option>0</option><option selected>7</option><option>30</option><option>90</option></select>
+              <span>days</span>
+            </div>
+            <p class="muted tiny" style="margin:10px 0 0"><span class="mono">0</span> days = session only (history cleared on quit).</p>
+          </div>
+        </section>
+
+        <!-- FEEDBACK -->
+        <section class="sec">
+          <h2 class="sec__title">Progress feedback</h2>
+          <div class="grp" style="padding:14px" data-testid="feedback-opts">
+            <div class="opt-row"><input type="checkbox" id="fb-spinner" data-testid="feedback-spinner" checked><label for="fb-spinner"><strong>Menu-bar spinner</strong> — baseline indicator while refining.</label></div>
+            <div class="opt-row"><input type="checkbox" id="fb-hud" data-testid="feedback-hud"><label for="fb-hud"><strong>Cursor HUD</strong> — floating pill near your cursor.</label></div>
+            <div class="opt-row"><input type="checkbox" id="fb-sound" data-testid="feedback-sound" checked><label for="fb-sound"><strong>Completion sound</strong> — chime when the redraft lands.</label></div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

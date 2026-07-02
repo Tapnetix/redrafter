@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Add your first provider</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+<style>
+  .choice { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:14px 0; }
+  .choice__btn { text-align:left; padding:16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:inherit; display:flex; flex-direction:column; gap:6px; }
+  .choice__btn:hover { border-color:var(--primary); background:var(--hover); }
+  .choice__btn.active { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary); }
+  .choice__btn strong { font-size:var(--fs-body); }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tile { display:flex; align-items:center; gap:10px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:inherit; }
+  .tile:hover { border-color:var(--primary); background:var(--hover); }
+  .tile.active { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary); }
+  @media (max-width:560px){ .choice,.tiles{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="setup">
+  <div class="setup__card" style="width:600px">
+    <div class="setup__logo" aria-hidden="true">R</div>
+    <p class="eyebrow">First run</p>
+    <h1>Connect your first AI provider</h1>
+    <p class="muted" style="font-size:16px;margin:0 0 8px;max-width:56ch">redrafter needs one model to refine your text. Use a cloud provider with an API key, or run models locally with Ollama — your text never leaves your machine.</p>
+
+    <h2 class="vh">Choose provider type</h2>
+    <div class="choice" role="tablist" aria-label="Provider type">
+      <button class="choice__btn active" id="firstrun-cloud-tab" role="tab" aria-selected="true" aria-controls="firstrun-cloud-panel" data-testid="firstrun-cloud" onclick="firstrunChoose('cloud',this)">
+        <strong>☁ Cloud provider</strong>
+        <span class="muted tiny">Anthropic, OpenAI, Gemini, or any OpenAI-compatible endpoint. Paste an API key.</span>
+      </button>
+      <button class="choice__btn" id="firstrun-local-tab" role="tab" aria-selected="false" aria-controls="firstrun-local-panel" data-testid="firstrun-local" onclick="firstrunChoose('local',this)">
+        <strong>🖥 Local (Ollama)</strong>
+        <span class="muted tiny">Run open models on your own machine. Private, offline, no key.</span>
+      </button>
+    </div>
+
+    <!-- CLOUD PANEL -->
+    <section id="firstrun-cloud-panel" role="tabpanel" aria-labelledby="firstrun-cloud-tab" data-testid="firstrun-cloud-panel">
+      <h2 style="font-size:var(--fs-h2);margin:0 0 8px">Pick a cloud provider</h2>
+      <div class="tiles" role="radiogroup" aria-label="Cloud provider">
+        <button class="tile active" role="radio" aria-checked="true" data-testid="firstrun-provider-anthropic" onclick="firstrunProvider(this,'Anthropic','https://console.anthropic.com')"><span class="status-dot" style="background:var(--accent-500)"></span> Anthropic</button>
+        <button class="tile" role="radio" aria-checked="false" data-testid="firstrun-provider-openai" onclick="firstrunProvider(this,'OpenAI','https://platform.openai.com/api-keys')"><span class="status-dot" style="background:var(--refined)"></span> OpenAI</button>
+        <button class="tile" role="radio" aria-checked="false" data-testid="firstrun-provider-gemini" onclick="firstrunProvider(this,'Google Gemini','https://aistudio.google.com/apikey')"><span class="status-dot" style="background:var(--info)"></span> Google Gemini</button>
+        <button class="tile" role="radio" aria-checked="false" data-testid="firstrun-provider-openai-compat" onclick="firstrunProvider(this,'OpenAI-compatible','')"><span class="status-dot" style="background:var(--warning)"></span> OpenAI-compatible</button>
+      </div>
+      <div class="grp" style="padding:14px;margin-top:12px">
+        <div class="field">
+          <label for="firstrun-key">API key for <span id="firstrun-provider-name" class="mono">Anthropic</span></label>
+          <input class="input mono" id="firstrun-key" type="password" data-testid="firstrun-key" placeholder="sk-ant-…">
+          <a href="#" id="firstrun-get-key" data-testid="firstrun-get-key" style="color:var(--primary);font-size:12px" onclick="event.preventDefault();toast('Opening provider key page…')">Get a key ↗</a>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <button class="btn btn--primary btn--sm" data-testid="firstrun-connect" onclick="firstrunConnected()">Connect</button>
+          <span class="chip ok" id="firstrun-connected" data-testid="firstrun-connected" hidden><span class="status-dot green"></span> Connected · claude-opus-4-6 enabled as default</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOCAL PANEL -->
+    <section id="firstrun-local-panel" role="tabpanel" aria-labelledby="firstrun-local-tab" data-testid="firstrun-local-panel" hidden>
+      <div class="segmented" data-testid="firstrun-ollama-switch" aria-label="Ollama state (wireframe)" style="margin-bottom:10px">
+        <button class="active" onclick="firstrunOllama('detected',this)">Detected</button>
+        <button onclick="firstrunOllama('missing',this)">Not installed</button>
+      </div>
+      <div class="grp" id="firstrun-ollama-detected" data-testid="firstrun-ollama-detected" style="padding:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="status-dot green"></span>
+          <div style="flex:1"><strong style="font-size:var(--fs-small)">Ollama detected at <span class="mono">localhost:11434</span></strong><div class="muted tiny">3 models available locally.</div></div>
+          <button class="btn btn--primary btn--sm" data-testid="firstrun-ollama-connect" onclick="firstrunConnected()">Connect</button>
+        </div>
+      </div>
+      <div class="grp" id="firstrun-ollama-missing" data-testid="firstrun-ollama-missing" hidden style="padding:14px">
+        <div style="display:flex;align-items:flex-start;gap:12px">
+          <span class="status-dot amber"></span>
+          <div style="flex:1">
+            <strong style="font-size:var(--fs-small)">Ollama not found</strong>
+            <div class="muted tiny" style="margin-bottom:8px">Install Ollama, then redrafter can pull a small default model for you.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <a class="btn btn--sm" href="#" data-testid="firstrun-ollama-install" onclick="event.preventDefault();toast('Opening ollama.com/download…')">Install Ollama ↗</a>
+              <button class="btn btn--sm" data-testid="firstrun-ollama-pull" onclick="toast('Will pull qwen3:8b after install')">Pull qwen3:8b (default)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-top:24px">
+      <span class="muted tiny">You can add more providers later in Connections.</span>
+      <div style="flex:1"></div>
+      <a class="btn btn--primary" id="firstrun-continue" data-testid="firstrun-continue" href="index.html">Continue →</a>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

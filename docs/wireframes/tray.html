@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Menu-bar</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+<style>
+  .tray-backdrop { position: fixed; inset: 30px 0 0 0; background: rgba(6,7,10,.45); backdrop-filter: blur(2px); z-index: 40; }
+  html.light .tray-backdrop { background: rgba(120,120,140,.28); }
+  .demo-bar { position: fixed; left: 12px; bottom: 12px; z-index: 70; display: flex; flex-direction: column; gap: 8px; }
+</style>
+</head>
+<body>
+
+<!-- ===== macOS menu-bar strip ===== -->
+<div class="menubar" role="banner">
+  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 15.5a6 6 0 0 1 7 0M12 18.5h.01"/></svg>
+  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12l-1 6-5 3-5-3-1-6ZM6 21h12l-1-6-5-3-5 3-1 6Z"/></svg>
+  <time datetime="09:41">9:41</time>
+  <button class="mb-icon" id="theme-toggle" data-testid="theme-toggle" aria-label="Toggle light / dark" title="Toggle theme" style="width:22px"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+  <!-- redrafter tray icon (reflects current state) -->
+  <button class="mb-icon active" id="menubar-icon" data-testid="menubar-icon" data-state="idle" aria-haspopup="menu" aria-expanded="true" aria-label="redrafter menu" title="redrafter">
+    <span class="mb-icon__glyph">R</span>
+    <span class="spinner mb-icon__spin" aria-hidden="true" hidden></span>
+    <span class="mb-icon__badge" hidden></span>
+  </button>
+</div>
+
+<!-- dimmed desktop behind the open menu -->
+<div class="tray-backdrop" aria-hidden="true"></div>
+
+<!-- ===== the open dropdown menu ===== -->
+<div class="tray" role="menu" aria-label="redrafter menu" data-testid="tray" style="position:fixed;top:38px;right:12px;z-index:50;max-height:calc(100vh - 60px);overflow-y:auto">
+  <div class="tray__head">
+    <span class="cap__badge" style="width:24px;height:24px;font-size:13px" aria-hidden="true">R</span>
+    <div style="flex:1;min-width:0">
+      <strong style="font-size:14px;display:block">redrafter</strong>
+      <span class="tiny muted" aria-live="polite">
+        <span id="tray-status-idle">Ready</span>
+        <span id="tray-status-refining" data-testid="tray-state-refining" hidden style="display:inline-flex;align-items:center;gap:5px"><span class="spinner" style="width:11px;height:11px" aria-hidden="true"></span> Refining… <span class="mono" data-active-model-label>claude-opus-4-6</span></span>
+        <span id="tray-status-error" data-testid="tray-state-error" hidden style="color:var(--orig)">Last refine failed — Ollama unreachable</span>
+        <span id="tray-status-perm" data-testid="tray-state-perm" hidden style="color:var(--warning)">Accessibility permission needed</span>
+        <span id="tray-status-paused" data-testid="tray-state-paused" hidden>Paused — capturing off</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- primary action -->
+  <button class="menu__item" role="menuitem" id="tray-refine" data-testid="tray-refine" onclick="toast('Refining selection…')">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
+    Refine selection <span class="kbd-hint">⌃⌥R</span>
+  </button>
+  <!-- error-only: retry last -->
+  <button class="menu__item" role="menuitem" id="tray-retry-last" data-testid="tray-retry-last" hidden onclick="toast('Retrying last refine…')">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg>
+    Retry last refine
+  </button>
+  <!-- permission-only: open system settings -->
+  <a class="menu__item" role="menuitem" id="tray-perm-open-settings" data-testid="tray-perm-open-settings" hidden href="index.html" style="color:var(--warning)">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+    Open System Settings
+  </a>
+
+  <div class="menu__sep"></div>
+
+  <!-- active model — collapsed row; reveals the switcher on demand -->
+  <button class="menu__item" role="menuitem" id="tray-active-model" data-testid="tray-active-model" aria-expanded="false" aria-controls="tray-model-region" onclick="toggleTrayModels(this)">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+    Active model
+    <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px">
+      <span class="mono tiny" data-active-model-label style="color:var(--primary)">claude-opus-4-6</span>
+      <span class="tray-caret" aria-hidden="true">▸</span>
+    </span>
+  </button>
+  <div id="tray-model-region" hidden>
+    <div role="group" aria-label="Active model" data-testid="tray-model-list" data-tray-render></div>
+    <a class="menu__item" role="menuitem" href="models.html" data-testid="tray-manage-models">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+      Manage models…
+    </a>
+  </div>
+
+  <div class="menu__sep"></div>
+
+  <!-- pause / resume -->
+  <button class="menu__item" role="menuitem" id="tray-pause" data-testid="tray-pause" onclick="trayPause()">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14M16 5v14"/></svg>
+    Pause capturing
+  </button>
+  <button class="menu__item" role="menuitem" id="tray-resume" data-testid="tray-resume" hidden onclick="trayResume()">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z"/></svg>
+    Resume capturing
+  </button>
+
+  <div class="menu__sep"></div>
+
+  <a class="menu__item" role="menuitem" href="index.html" data-testid="tray-settings">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8 2 2 0 1 1-2.8 2.8 1.6 1.6 0 0 0-2.7 1.1 2 2 0 1 1-4 0 1.6 1.6 0 0 0-2.6-1.1 2 2 0 1 1-2.8-2.8A1.6 1.6 0 0 0 3 13.6a2 2 0 1 1 0-4A1.6 1.6 0 0 0 4.6 7a2 2 0 1 1 2.8-2.8A1.6 1.6 0 0 0 10 3.6a2 2 0 1 1 4 0 1.6 1.6 0 0 0 2.7 1.1 2 2 0 1 1 2.8 2.8A1.6 1.6 0 0 0 21 11a2 2 0 1 1 0 4 1.6 1.6 0 0 0-1.6 1Z"/></svg>
+    Settings…
+  </a>
+  <a class="menu__item" role="menuitem" href="history.html" data-testid="tray-history">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+    History…
+  </a>
+  <!-- check for updates (sub-states toggled via scaffolding) -->
+  <button class="menu__item" role="menuitem" id="tray-updates" data-testid="tray-updates" onclick="setTrayUpdates('checking')">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>
+    <span id="tray-updates-idle">Check for updates…</span>
+    <span id="tray-updates-checking" data-testid="tray-updates-checking" hidden style="display:inline-flex;align-items:center;gap:6px"><span class="spinner" style="width:12px;height:12px" aria-hidden="true"></span> Checking…</span>
+    <span id="tray-updates-uptodate" data-testid="tray-updates-uptodate" hidden>You're up to date · <span class="mono">v1.0.0</span></span>
+    <span id="tray-updates-available" data-testid="tray-updates-available" hidden style="color:var(--primary)">Update to v1.1 →</span>
+  </button>
+  <!-- launch at login (checkable) -->
+  <button class="menu__item" role="menuitemcheckbox" id="tray-launch-login" data-testid="tray-launch-login" aria-checked="true" onclick="toggleLaunchLogin(this)">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
+    Launch at login
+    <span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg></span>
+  </button>
+
+  <div class="menu__sep"></div>
+
+  <button class="menu__item" role="menuitem" data-testid="tray-quit" onclick="toast('Quitting redrafter…')">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+    Quit redrafter <span class="kbd-hint">⌘Q</span>
+  </button>
+</div>
+
+<!-- ===== wireframe scaffolding: force icon/status + update sub-states ===== -->
+<div class="demo-bar">
+  <div class="demo-scaffold" id="tray-icon-state-switch" data-testid="tray-icon-state-switch" aria-label="Wireframe demo icon state">
+    <span class="demo-scaffold__label">Wireframe demo · icon state:</span>
+    <button type="button" class="active" data-state="idle" onclick="setTrayIconState('idle',this)">Idle</button>
+    <button type="button" data-state="refining" onclick="setTrayIconState('refining',this)">Refining</button>
+    <button type="button" data-state="error" onclick="setTrayIconState('error',this)">Error</button>
+    <button type="button" data-state="permission-needed" onclick="setTrayIconState('permission-needed',this)">Permission</button>
+    <button type="button" data-state="paused" onclick="setTrayIconState('paused',this)">Paused</button>
+  </div>
+  <div class="demo-scaffold" data-testid="tray-updates-switch" aria-label="Wireframe demo updates state">
+    <span class="demo-scaffold__label">Wireframe demo · updates:</span>
+    <button type="button" class="active" onclick="setTrayUpdates('idle',this)">Idle</button>
+    <button type="button" onclick="setTrayUpdates('checking',this)">Checking</button>
+    <button type="button" onclick="setTrayUpdates('uptodate',this)">Up to date</button>
+    <button type="button" onclick="setTrayUpdates('available',this)">Available</button>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

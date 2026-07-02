@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Welcome</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="setup">
+  <div class="setup__card">
+    <div class="setup__logo" aria-hidden="true">R</div>
+    <p class="eyebrow">First run</p>
+    <h1>One permission to redraft anywhere</h1>
+    <p class="muted" style="font-size:16px;margin:0 0 20px;max-width:52ch">redrafter works inside every app on your Mac. To do that it needs one thing from macOS — the <strong>Accessibility</strong> permission.</p>
+
+    <section aria-labelledby="why-title">
+      <h2 id="why-title">Why Accessibility?</h2>
+      <p class="muted" style="font-size:var(--fs-small);margin:0 0 4px">The permission lets redrafter do exactly two things when you press the hotkey:</p>
+      <div class="why-grid">
+        <div class="why"><strong>Read your selection.</strong><br><span class="muted">Copies the highlighted text so the model has something to refine.</span></div>
+        <div class="why"><strong>Paste it back.</strong><br><span class="muted">Replaces your selection with the refined result, in place.</span></div>
+      </div>
+      <p class="muted tiny" style="margin:0 0 6px">redrafter never reads your screen in the background — it runs only on the text you select, only when you invoke it.</p>
+      <p class="muted tiny" data-testid="perm-capture-tech-note" style="margin:0 0 20px">redrafter reads your selection via the Accessibility API, with clipboard-based capture as a fallback.</p>
+    </section>
+
+    <section aria-labelledby="status-title">
+      <h2 id="status-title">Status</h2>
+      <div class="grp">
+        <div class="opt" id="perm-status" data-testid="perm-status" data-granted="false">
+          <span class="status-dot red" aria-hidden="true"></span>
+          <div class="opt__main">
+            <div class="opt__name">Accessibility — <span data-perm-text>Not granted</span></div>
+            <div class="opt__desc">redrafter needs this to read your selection and paste back.</div>
+          </div>
+          <div class="opt__ctrl">
+            <button class="btn btn--primary" id="perm-open-settings" data-testid="perm-open-settings" onclick="grantPermission()">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8 2 2 0 1 1-2.8 2.8 1.6 1.6 0 0 0-2.7 1.1 2 2 0 1 1-4 0 1.6 1.6 0 0 0-2.6-1.1 2 2 0 1 1-2.8-2.8A1.6 1.6 0 0 0 3 13.6a2 2 0 1 1 0-4A1.6 1.6 0 0 0 4.6 7a2 2 0 1 1 2.8-2.8A1.6 1.6 0 0 0 10 3.6a2 2 0 1 1 4 0 1.6 1.6 0 0 0 2.7 1.1 2 2 0 1 1 2.8 2.8A1.6 1.6 0 0 0 21 11a2 2 0 1 1 0 4 1.6 1.6 0 0 0-1.6 1Z"/></svg>
+              Open System Settings
+            </button>
+          </div>
+        </div>
+      </div>
+      <p class="muted tiny" style="margin:10px 0 0">redrafter re-checks automatically the moment you grant it — no restart needed.</p>
+    </section>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-top:24px">
+      <span class="muted tiny">Continue is enabled once Accessibility is granted.</span>
+      <div style="flex:1"></div>
+      <a class="btn btn--ghost" id="perm-continue" data-testid="perm-continue" href="first-run.html" aria-disabled="true" tabindex="-1" onclick="if(this.getAttribute('aria-disabled')==='true'){event.preventDefault();return false;}">Continue → add a provider</a>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

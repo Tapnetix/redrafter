@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — General</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app" id="app-root">
+
+  <!-- ============ ICON RAIL ============ -->
+  <nav class="rail" aria-label="Primary" data-testid="icon-rail">
+    <a class="rail__logo" href="index.html" aria-label="redrafter home" data-testid="rail-logo">R</a>
+    <a class="rail-btn active" href="index.html" aria-label="General" title="General" data-testid="rail-general"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></a>
+    <a class="rail-btn" href="connections.html" aria-label="Connections" title="Connections" data-testid="rail-connections"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></a>
+    <a class="rail-btn" href="models.html" aria-label="Models" title="Models" data-testid="rail-models"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></a>
+    <a class="rail-btn" href="behavior.html" aria-label="Behavior" title="Behavior" data-testid="rail-behavior"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></a>
+    <a class="rail-btn" href="presets.html" aria-label="Presets" title="Presets" data-testid="rail-presets"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></a>
+    <a class="rail-btn" href="history.html" aria-label="History" title="History" data-testid="rail-history"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></a>
+    <div class="rail__spacer"></div>
+    <a class="rail-btn" href="capture.html" aria-label="Capture demo" title="Capture (⌃⌥R)" data-testid="rail-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></a>
+    <button class="rail-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle light / dark" data-testid="theme-toggle"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+  </nav>
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar" aria-label="Settings sections" data-testid="sidebar">
+    <div class="sidebar__head"><div class="app-name">redraft<span>er</span></div></div>
+    <a class="capture-btn" href="capture.html" data-testid="sidebar-capture">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
+      Capture selection
+      <kbd>⌃⌥R</kbd>
+    </a>
+    <div class="sidebar__scroll">
+      <div class="nav-group" data-testid="group-settings">
+        <div class="nav-group__label">Settings</div>
+        <a class="nav-item active" href="index.html" data-testid="nav-general"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="nav-item__label">General</span></a>
+        <a class="nav-item" href="connections.html" data-testid="nav-connections"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></span><span class="nav-item__label">Connections</span></a>
+        <a class="nav-item" href="models.html" data-testid="nav-models"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><span class="nav-item__label">Models</span></a>
+        <a class="nav-item" href="behavior.html" data-testid="nav-behavior"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></span><span class="nav-item__label">Behavior</span></a>
+        <a class="nav-item" href="presets.html" data-testid="nav-presets"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span><span class="nav-item__label">Presets</span><span class="nav-item__count">4</span></a>
+        <a class="nav-item" href="history.html" data-testid="nav-history"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="nav-item__label">History</span><span class="nav-item__count">50</span></a>
+      </div>
+    </div>
+    <div class="sidebar__foot">
+      <a class="nav-item" href="models.html" data-testid="sidebar-active-model" style="border:1px solid var(--border)">
+        <span class="status-dot green"></span>
+        <span class="nav-item__label mono">claude-opus-4-6</span>
+        <span class="mono tiny muted">active</span>
+      </a>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <header class="topbar"><h1 class="topbar__title">General</h1></header>
+    <div class="content" style="padding:0">
+      <div class="settings">
+
+        <!-- PERMISSION -->
+        <section class="sec" data-testid="general-permission">
+          <h2 class="sec__title"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12l2 2 4-4"/></svg> Permissions</h2>
+          <div class="grp">
+            <div class="opt" data-testid="perm-status" data-granted="true">
+              <span class="status-dot green" aria-hidden="true"></span>
+              <div class="opt__main">
+                <div class="opt__name">Accessibility <span class="chip ok" style="margin-left:4px">Granted ✓</span></div>
+                <div class="opt__desc">Required so redrafter can read your selection and paste the refined text back in place. <a href="onboarding.html" data-testid="view-first-run" style="color:var(--primary)">View first-run setup</a>.</div>
+              </div>
+              <div class="opt__ctrl"><button class="btn btn--sm" data-testid="perm-recheck" onclick="toast('Accessibility: granted')">Re-check</button></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- CAPTURE / HOTKEY -->
+        <section class="sec" data-testid="general-hotkey">
+          <h2 class="sec__title"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Capture</h2>
+          <div class="grp">
+            <div class="opt">
+              <div class="opt__main"><div class="opt__name">Global hotkey</div><div class="opt__desc">Press anywhere to refine the current selection.</div></div>
+              <div class="opt__ctrl kbd-field"><span class="mono" id="hotkey-value" data-testid="hotkey-value">⌃⌥R</span><button class="btn btn--ghost btn--sm" data-testid="hotkey-change" onclick="startHotkeyCapture()">Change</button></div>
+            </div>
+            <div class="opt">
+              <div class="opt__main"><div class="opt__name">Start redrafter at login</div><div class="opt__desc">Launch the menu-bar app automatically when you sign in.</div></div>
+              <div class="opt__ctrl"><label class="switch"><input type="checkbox" checked aria-label="Start at login" data-testid="general-launch-login"><span class="track"></span></label></div>
+            </div>
+            <a class="opt" href="tray.html" data-testid="general-tray-link" style="color:inherit">
+              <div class="opt__main"><div class="opt__name">Menu-bar icon</div><div class="opt__desc">redrafter lives in your menu bar — see the icon states and dropdown.</div></div>
+              <div class="opt__ctrl"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-tertiary)"><path d="M9 18l6-6-6-6"/></svg></div>
+            </a>
+          </div>
+        </section>
+
+        <!-- ACTIVE MODEL SUMMARY -->
+        <section class="sec" data-testid="general-active-model">
+          <div style="display:flex;align-items:center;gap:10px">
+            <h2 class="sec__title" style="margin:0"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg> Active model</h2>
+            <div style="flex:1"></div>
+            <div class="segmented" data-testid="active-model-state-switch" aria-label="State (wireframe)">
+              <button class="active" onclick="setActiveModelState('set',this)">Selected</button>
+              <button onclick="setActiveModelState('none',this)">No provider</button>
+              <button onclick="setActiveModelState('none-connected',this)">No active</button>
+            </div>
+          </div>
+          <div class="grp" style="margin-top:8px">
+            <a class="opt" href="models.html" id="active-model-set" data-testid="active-model-link" style="color:inherit">
+              <span class="status-dot green" aria-hidden="true"></span>
+              <div class="opt__main"><div class="opt__name mono">claude-opus-4-6</div><div class="opt__desc">Anthropic · click to change the active model.</div></div>
+              <div class="opt__ctrl"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-tertiary)"><path d="M9 18l6-6-6-6"/></svg></div>
+            </a>
+            <!-- (a) no connection → route to Connections -->
+            <a class="opt" href="connections.html" id="active-model-none" data-testid="active-model-none" hidden style="color:inherit">
+              <span class="status-dot amber" aria-hidden="true"></span>
+              <div class="opt__main"><div class="opt__name">No model selected</div><div class="opt__desc">Connect a provider to enable a model.</div></div>
+              <div class="opt__ctrl"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-tertiary)"><path d="M9 18l6-6-6-6"/></svg></div>
+            </a>
+            <!-- (b) connected but none active → route to Models -->
+            <a class="opt" href="models.html" id="active-model-none-connected" data-testid="active-model-none-connected" hidden style="color:inherit">
+              <span class="status-dot amber" aria-hidden="true"></span>
+              <div class="opt__main"><div class="opt__name">No active model</div><div class="opt__desc">You have connected providers — pick an active model.</div></div>
+              <div class="opt__ctrl"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-tertiary)"><path d="M9 18l6-6-6-6"/></svg></div>
+            </a>
+          </div>
+        </section>
+
+        <!-- APPEARANCE -->
+        <section class="sec" data-testid="general-theme">
+          <h2 class="sec__title"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></svg> Appearance</h2>
+          <div class="grp">
+            <div class="opt">
+              <div class="opt__main"><div class="opt__name">Theme</div><div class="opt__desc">Match the OS, or pick a fixed appearance.</div></div>
+              <div class="opt__ctrl"><div class="segmented" id="theme-seg" data-testid="setting-theme">
+                <button data-theme="system" data-testid="theme-system" onclick="setTheme('system',this)">System</button>
+                <button data-theme="dark" class="active" data-testid="theme-dark" onclick="setTheme('dark',this)">Dark</button>
+                <button data-theme="light" data-testid="theme-light" onclick="setTheme('light',this)">Light</button>
+              </div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ABOUT -->
+        <section class="sec" data-testid="general-about">
+          <h2 class="sec__title"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg> About</h2>
+          <div class="grp">
+            <div class="opt">
+              <div class="opt__main"><div class="opt__name">redrafter <span class="mono tiny muted">v1.0.0</span></div><div class="opt__desc">macOS-first · menu-bar text refinement.</div></div>
+              <div class="opt__ctrl"><button class="btn btn--sm" data-testid="check-updates" onclick="toast('You’re up to date')">Check for updates</button></div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- HOTKEY CAPTURE MODAL -->
+<div class="modal-back" id="hotkey-modal" role="dialog" aria-modal="true" aria-labelledby="hotkey-modal-title" data-testid="hotkey-modal">
+  <div class="modal" style="width:480px">
+    <h2 class="modal__title" id="hotkey-modal-title">Set global hotkey</h2>
+    <p class="muted" style="font-size:var(--fs-small);margin:0 0 14px">Press a key combination now, or <kbd>Esc</kbd> to cancel. Include a modifier (⌘ ⌃ ⌥ ⇧).</p>
+    <div style="text-align:center;padding:18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg)">
+      <span class="mono" id="hotkey-capture" data-testid="hotkey-capture" style="font-size:22px;letter-spacing:.1em;color:var(--primary)">⌃⌥R</span>
+    </div>
+    <!-- conflict warning (toggleable via scaffolding) -->
+    <div id="hotkey-conflict" data-testid="hotkey-conflict" hidden style="margin-top:12px;display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--warning);border-radius:var(--radius);background:color-mix(in srgb,var(--warning) 10%,transparent)">
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--warning)" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:var(--fs-small)"><span class="mono">⌃⌥R</span> is already used by another shortcut</div>
+        <div class="muted tiny" style="margin:2px 0 0">Try a different combination, or override the existing binding.</div>
+      </div>
+    </div>
+    <div class="modal__foot" style="justify-content:space-between">
+      <button class="btn btn--ghost btn--sm" data-testid="hotkey-conflict-toggle" onclick="toggleHotkeyConflict()">Simulate conflict</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn" data-testid="hotkey-cancel" onclick="cancelHotkey()">Cancel</button>
+        <button class="btn btn--primary" id="hotkey-conflict-override" data-testid="hotkey-conflict-override" hidden onclick="saveHotkey()">Use anyway</button>
+        <button class="btn btn--primary" data-testid="hotkey-save" onclick="saveHotkey()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

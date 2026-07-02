@@ -1,0 +1,28 @@
+# Screenshots (scratch)
+Screenshot*.png
+
+# Claude Code local state (worktrees, scratch)
+.claude/
+
+# Rust
+/target/
+**/target/
+
+# Node / frontend
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.local
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

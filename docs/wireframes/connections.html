@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>redrafter — Connections</title>
+<script>(function(){try{var t=localStorage.getItem("rd-theme");var sys=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches;if(t==="light"||((t==="system"||!t)&&sys))document.documentElement.classList.add("light");}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Primary" data-testid="icon-rail">
+    <a class="rail__logo" href="index.html" aria-label="redrafter home" data-testid="rail-logo">R</a>
+    <a class="rail-btn" href="index.html" aria-label="General" title="General" data-testid="rail-general"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></a>
+    <a class="rail-btn active" href="connections.html" aria-label="Connections" title="Connections" data-testid="rail-connections"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></a>
+    <a class="rail-btn" href="models.html" aria-label="Models" title="Models" data-testid="rail-models"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></a>
+    <a class="rail-btn" href="behavior.html" aria-label="Behavior" title="Behavior" data-testid="rail-behavior"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></a>
+    <a class="rail-btn" href="presets.html" aria-label="Presets" title="Presets" data-testid="rail-presets"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></a>
+    <a class="rail-btn" href="history.html" aria-label="History" title="History" data-testid="rail-history"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></a>
+    <div class="rail__spacer"></div>
+    <a class="rail-btn" href="capture.html" aria-label="Capture demo" title="Capture (⌃⌥R)" data-testid="rail-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></a>
+    <button class="rail-btn" id="theme-toggle" aria-label="Toggle theme" title="Toggle light / dark" data-testid="theme-toggle"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+  </nav>
+
+  <aside class="sidebar" aria-label="Settings sections" data-testid="sidebar">
+    <div class="sidebar__head"><div class="app-name">redraft<span>er</span></div></div>
+    <a class="capture-btn" href="capture.html" data-testid="sidebar-capture"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg> Capture selection <kbd>⌃⌥R</kbd></a>
+    <div class="sidebar__scroll">
+      <div class="nav-group" data-testid="group-settings">
+        <div class="nav-group__label">Settings</div>
+        <a class="nav-item" href="index.html" data-testid="nav-general"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="nav-item__label">General</span></a>
+        <a class="nav-item active" href="connections.html" data-testid="nav-connections"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></span><span class="nav-item__label">Connections</span></a>
+        <a class="nav-item" href="models.html" data-testid="nav-models"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><span class="nav-item__label">Models</span></a>
+        <a class="nav-item" href="behavior.html" data-testid="nav-behavior"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"/></svg></span><span class="nav-item__label">Behavior</span></a>
+        <a class="nav-item" href="presets.html" data-testid="nav-presets"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span><span class="nav-item__label">Presets</span><span class="nav-item__count">4</span></a>
+        <a class="nav-item" href="history.html" data-testid="nav-history"><span class="nav-item__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="nav-item__label">History</span><span class="nav-item__count">50</span></a>
+      </div>
+    </div>
+    <div class="sidebar__foot">
+      <a class="nav-item" href="models.html" data-testid="sidebar-active-model" style="border:1px solid var(--border)"><span class="status-dot green"></span><span class="nav-item__label mono">claude-opus-4-6</span><span class="mono tiny muted">active</span></a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 class="topbar__title">Connections</h1>
+      <div class="topbar__spacer"></div>
+      <div class="segmented" data-testid="connections-state-switch" aria-label="View state (wireframe)">
+        <button class="active" onclick="setConnectionsState('list',this)">Populated</button>
+        <button onclick="setConnectionsState('empty',this)">Empty</button>
+      </div>
+      <button class="btn btn--primary btn--sm" data-testid="add-connection" onclick="openConnectionModal('add')"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg> Add connection</button>
+    </header>
+    <div class="content" style="padding:0">
+      <div class="settings">
+
+        <!-- CONNECTIONS LIST -->
+        <section class="sec" id="connections-populated">
+          <p class="muted tiny" style="margin:0 0 8px">A connection is a provider + base URL + key. redrafter auto-discovers models from each one; enable the ones you want in <a href="models.html" style="color:var(--primary)">Models</a>.</p>
+          <div class="grp list" data-testid="connections-list">
+
+            <!-- Ollama -->
+            <div class="prov" data-testid="connection-row-ollama">
+              <span class="status-dot green" aria-hidden="true" title="connected"></span>
+              <div class="prov__main">
+                <div class="prov__name">Ollama <span class="chip mono">local</span></div>
+                <div class="prov__desc mono">http://localhost:11434 · <span style="color:var(--refined)">running</span> · 3 models · no key needed</div>
+              </div>
+              <button class="btn btn--sm" data-testid="connection-test-ollama" onclick="toast('Ollama reachable · 3 models')">Test</button>
+              <button class="btn btn--sm" data-testid="connection-refresh-ollama" onclick="toast('Refreshed · /api/tags → 3 models')">Refresh models</button>
+              <button class="btn btn--sm" data-testid="connection-edit-ollama" onclick="openConnectionModal('edit',{type:'Ollama',base:'http://localhost:11434',key:'',name:'Ollama'})">Edit</button>
+              <label class="switch" title="Enable connection"><input type="checkbox" checked aria-label="Ollama enabled"><span class="track"></span></label>
+            </div>
+
+            <!-- Anthropic -->
+            <div class="prov" data-testid="connection-row-anthropic">
+              <span class="status-dot green" aria-hidden="true" title="connected"></span>
+              <div class="prov__main">
+                <div class="prov__name">Anthropic</div>
+                <div class="prov__desc mono">https://api.anthropic.com · key sk-ant-••••4f2a · 7 models</div>
+              </div>
+              <button class="btn btn--sm" data-testid="connection-test-anthropic" onclick="toast('Auth ok · 7 models')">Test</button>
+              <button class="btn btn--sm" data-testid="connection-refresh-anthropic" onclick="toast('Refreshed · GET /v1/models → 7 models')">Refresh models</button>
+              <button class="btn btn--sm" data-testid="connection-edit-anthropic" onclick="openConnectionModal('edit',{type:'Anthropic',base:'https://api.anthropic.com',key:'sk-ant-••••••••4f2a',name:'Anthropic'})">Edit</button>
+              <label class="switch" title="Enable connection"><input type="checkbox" checked aria-label="Anthropic enabled"><span class="track"></span></label>
+            </div>
+
+            <!-- Gemini -->
+            <div class="prov" data-testid="connection-row-gemini">
+              <span class="status-dot green" aria-hidden="true" title="connected"></span>
+              <div class="prov__main">
+                <div class="prov__name">Google Gemini</div>
+                <div class="prov__desc mono">https://generativelanguage.googleapis.com · key AIza••••8c1d · 4 models</div>
+              </div>
+              <button class="btn btn--sm" data-testid="connection-test-gemini" onclick="toast('Auth ok · 4 models')">Test</button>
+              <button class="btn btn--sm" data-testid="connection-refresh-gemini" onclick="toast('Refreshed · /v1beta/models → 4 models')">Refresh models</button>
+              <button class="btn btn--sm" data-testid="connection-edit-gemini" onclick="openConnectionModal('edit',{type:'Google Gemini',base:'https://generativelanguage.googleapis.com',key:'AIza••••••••8c1d',name:'Google Gemini'})">Edit</button>
+              <label class="switch" title="Enable connection"><input type="checkbox" checked aria-label="Gemini enabled"><span class="track"></span></label>
+            </div>
+
+            <!-- OpenAI-compatible (auth error demo) -->
+            <div class="prov" data-testid="connection-row-openai-compat">
+              <span class="status-dot amber" aria-hidden="true" title="auth error"></span>
+              <div class="prov__main">
+                <div class="prov__name">OpenAI-compatible <span class="chip warn">auth error</span></div>
+                <div class="prov__desc mono">https://api.openai.com/v1 · key sk-••••2b90 · check key</div>
+              </div>
+              <button class="btn btn--sm" data-testid="connection-test-openai-compat" onclick="toast('connection failed · check key','error')">Test</button>
+              <button class="btn btn--sm" data-testid="connection-refresh-openai-compat" onclick="toast('Refresh needs a valid key','error')">Refresh models</button>
+              <button class="btn btn--sm" data-testid="connection-edit-openai-compat" onclick="openConnectionModal('edit',{type:'OpenAI-compatible',base:'https://api.openai.com/v1',key:'sk-••••••••2b90',name:'OpenAI-compatible'})">Edit</button>
+              <label class="switch" title="Enable connection"><input type="checkbox" checked aria-label="OpenAI-compatible enabled"><span class="track"></span></label>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- EMPTY STATE -->
+        <section class="sec" id="connections-empty-sec" hidden>
+          <div class="grp"><div class="empty" data-testid="connections-empty">
+            <div class="empty__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6"/></svg></div>
+            <p style="font-size:16px;color:var(--text);margin:0 0 6px">No providers connected yet</p>
+            <p class="muted" style="margin:0 0 16px">Connect a cloud provider or your local Ollama to start refining text.</p>
+            <button class="btn btn--primary" data-testid="connections-empty-cta" onclick="openConnectionModal('add')">Add your first AI provider</button>
+          </div></div>
+        </section>
+
+        <!-- KEY STORAGE -->
+        <section class="sec">
+          <h2 class="sec__title">Key storage</h2>
+          <p class="muted tiny" style="margin:0 0 8px">Where API keys are kept at rest.</p>
+          <div class="segmented" role="radiogroup" aria-label="Key storage" data-testid="key-storage">
+            <button class="active" role="radio" aria-checked="true" data-testid="key-storage-encrypted" onclick="pickSeg(this)">Encrypted config file</button>
+            <button role="radio" aria-checked="false" data-testid="key-storage-keychain" onclick="pickSeg(this)">OS Keychain</button>
+          </div>
+          <p class="muted tiny mono" style="margin-top:10px">store · ~/.config/redrafter/config.toml</p>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ADD / EDIT CONNECTION SHEET -->
+<div class="modal-back" id="connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-modal-title" data-testid="connection-modal">
+  <div class="modal" style="width:520px">
+    <h2 class="modal__title" id="connection-modal-title">Add connection</h2>
+
+    <div class="field">
+      <label for="conn-provider-type">Provider type</label>
+      <select class="input" id="conn-provider-type" data-testid="conn-provider-type" onchange="prefillConnBase()">
+        <option>Anthropic</option><option>OpenAI</option><option>Google Gemini</option><option>OpenAI-compatible</option><option>Ollama</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="conn-base-url">Base URL</label>
+      <input class="input mono" id="conn-base-url" data-testid="conn-base-url" value="https://api.anthropic.com">
+    </div>
+    <div class="field" id="conn-key-field">
+      <label for="conn-api-key">API key</label>
+      <input class="input mono" id="conn-api-key" type="password" data-testid="conn-api-key" placeholder="sk-ant-…">
+      <a href="#" data-testid="conn-get-key-link" id="conn-get-key-link" style="color:var(--primary);font-size:12px" onclick="event.preventDefault();toast('Opening provider key page…')">Get an API key ↗</a>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn--sm" data-testid="conn-test" onclick="connTest('ok')">Test connection</button>
+      <span class="chip ok" id="conn-test-ok" data-testid="conn-test-ok" hidden><span class="status-dot green"></span> reachable · auth ok · 7 models</span>
+      <span class="chip err" id="conn-test-error" data-testid="conn-test-error" hidden><span class="status-dot red"></span> connection failed · check key</span>
+    </div>
+    <!-- wireframe-only scaffolding: force which test result renders (not part of the real form) -->
+    <div class="demo-scaffold" data-testid="conn-test-switch" aria-label="Wireframe demo test result">
+      <span class="demo-scaffold__label">Wireframe demo · test result:</span>
+      <button type="button" class="active" onclick="connTest('ok',this)">Success</button>
+      <button type="button" onclick="connTest('error',this)">Error</button>
+    </div>
+
+    <!-- discovered models checklist (post-test) -->
+    <div style="margin-top:16px" id="conn-discovered" data-testid="conn-discovered-list">
+      <div style="font-weight:600;font-size:var(--fs-small);margin-bottom:6px">Discovered models <span class="muted tiny" style="font-weight:400">— enable the ones you want; ⭐ favorites show at the top of the tray</span></div>
+      <div class="grp" style="padding:8px">
+        <div class="opt-row" style="padding:6px 4px;align-items:center;gap:10px">
+          <input type="checkbox" id="cm1" data-testid="conn-model-check-opus" checked>
+          <label for="cm1" class="mono" style="flex:1">claude-opus-4-6</label>
+          <button class="btn btn--ghost btn--sm" data-testid="conn-model-star-opus" aria-pressed="true" aria-label="Favorite claude-opus-4-6" onclick="toggleStar(this)" style="color:var(--warning)">★</button>
+        </div>
+        <div class="opt-row" style="padding:6px 4px;align-items:center;gap:10px">
+          <input type="checkbox" id="cm2" data-testid="conn-model-check-sonnet" checked>
+          <label for="cm2" class="mono" style="flex:1">claude-sonnet-4-6</label>
+          <button class="btn btn--ghost btn--sm" data-testid="conn-model-star-sonnet" aria-pressed="false" aria-label="Favorite claude-sonnet-4-6" onclick="toggleStar(this)">☆</button>
+        </div>
+        <div class="opt-row" style="padding:6px 4px;align-items:center;gap:10px">
+          <input type="checkbox" id="cm3" data-testid="conn-model-check-haiku">
+          <label for="cm3" class="mono" style="flex:1">claude-3-5-haiku</label>
+          <button class="btn btn--ghost btn--sm" data-testid="conn-model-star-haiku" aria-pressed="false" aria-label="Favorite claude-3-5-haiku" onclick="toggleStar(this)">☆</button>
+        </div>
+      </div>
+      <!-- ALWAYS-present manual fallback -->
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px" data-testid="conn-add-model-manual">
+        <input class="input mono" aria-label="Add model manually" placeholder="+ Add model manually — e.g. claude-opus-4-6" style="flex:1">
+        <button class="btn btn--sm" onclick="toast('Model added')">Add</button>
+      </div>
+      <p class="muted tiny" style="margin:8px 0 0">Discovery uses <span class="mono">GET /v1/models</span>. If a provider has no list endpoint, add models by name above — redrafter never blocks on discovery.</p>
+    </div>
+
+    <div class="modal__foot" style="justify-content:space-between">
+      <button class="btn btn--danger btn--sm" id="connection-remove" data-testid="connection-remove" hidden onclick="closeModal('connection-modal');openModal('connection-remove-modal')">Remove connection</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn" data-testid="connection-cancel" onclick="closeModal('connection-modal')">Cancel</button>
+        <button class="btn btn--primary" data-testid="connection-save" onclick="closeModal('connection-modal');toast('Connection saved · default model enabled')"><span id="connection-save-label">Add connection</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- REMOVE CONNECTION CONFIRM -->
+<div class="modal-back" id="connection-remove-modal" role="alertdialog" aria-modal="true" aria-labelledby="conn-remove-title" data-testid="connection-remove-modal">
+  <div class="modal" style="width:400px">
+    <h2 class="modal__title" id="conn-remove-title">Remove connection?</h2>
+    <p class="muted" style="font-size:var(--fs-small);margin:0">Remove <span class="mono" id="conn-remove-name" style="color:var(--orig)">this connection</span> and its stored key? Its models will be disabled. This can't be undone.</p>
+    <div class="modal__foot">
+      <button class="btn" data-testid="connection-remove-cancel" onclick="closeModal('connection-remove-modal')">Cancel</button>
+      <button class="btn btn--primary btn--danger" style="background:var(--error);border-color:var(--error);color:#fff" data-testid="connection-remove-confirm" onclick="closeModal('connection-remove-modal');toast('Connection removed')">Remove connection</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
