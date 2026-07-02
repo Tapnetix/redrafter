@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/llm-provider",
+    "crates/text-inject",
+    "app/src-tauri",
+]

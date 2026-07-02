@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicovank/tauri-v2-schema/main/schema.json",
+  "productName": "redrafter",
+  "identifier": "com.redrafter.app",
+  "version": "0.1.0",
+  "build": {
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../out"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "redrafter",
+        "width": 380,
+        "height": 560,
+        "minWidth": 320,
+        "minHeight": 400,
+        "visible": false,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/tray-icon.png",
+      "iconAsTemplate": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "autostart": {},
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/Tapnetix/redrafter/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
