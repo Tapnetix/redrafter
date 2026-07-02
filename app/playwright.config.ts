@@ -4,6 +4,12 @@ import { defineConfig, devices } from '@playwright/test';
 // page.addInitScript() in the shared fixture at app/e2e/fixtures/setup.ts.
 // Scenario specs under app/e2e/specs/ import { test, expect } from that
 // fixture (not '@playwright/test' directly) to pick up the mock.
+// Port is env-configurable so parallel git-worktree runs don't collide on a
+// single hardcoded port. Set PW_PORT per run (the orchestrator gives each
+// concurrent worktree a distinct one); defaults to 3100 for a solo run.
+const PORT = Number(process.env.PW_PORT ?? 3100);
+const BASE_URL = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: 'e2e/specs',
   fullyParallel: true,
@@ -15,7 +21,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: 'http://localhost:3100',
+    baseURL: BASE_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -26,8 +32,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm dev --port 3100',
-    url: 'http://localhost:3100',
+    command: `pnpm dev --port ${PORT}`,
+    url: BASE_URL,
     reuseExistingServer: false,
     timeout: 30_000,
   },
