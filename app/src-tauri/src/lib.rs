@@ -20,10 +20,12 @@ pub mod prompt_builder;
 pub mod settings;
 pub mod tray;
 
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use llm_provider::OpenAiCompatProvider;
 use tauri::Manager;
+use tauri_plugin_global_shortcut::{Shortcut, ShortcutEvent, ShortcutState};
 use tokio_util::sync::CancellationToken;
 
 use connections::{connection_add, connection_list, ConnectionStore};
@@ -130,9 +132,9 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
     Ok(outcome)
 }
 
-/// The shared implementation behind both the `refine` command and the
-/// tray's Refine entry (`tray::tray_refine`) and (eventually) the global
-/// hotkey handler — one pipeline, three triggers.
+/// The shared implementation behind the `refine` command, the tray's
+/// Refine entry (`tray::tray_refine`), and the global hotkey
+/// (`dispatch_hotkey`, below) — one pipeline, three triggers.
 pub(crate) async fn run_refine<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<RefineOutcome, String> {
@@ -161,6 +163,53 @@ pub(crate) async fn run_refine<R: tauri::Runtime>(
 #[tauri::command]
 async fn refine<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<RefineOutcome, String> {
     run_refine(&app).await
+}
+
+/// Reacts to an OS-level event for any hotkey registered through
+/// `tauri-plugin-global-shortcut` — the plugin dispatches every registered
+/// shortcut's events through the one `.with_handler` closure `run` installs
+/// below, not just whichever combo is "current" (`register_default` at
+/// startup and `hotkey_set` rebinds both go through the same plugin
+/// manager). This is that closure's body, pulled out so it's unit-testable
+/// under `tauri::test::MockRuntime` with a synthetic `Shortcut`/
+/// `ShortcutEvent` instead of a real OS keypress.
+///
+/// Fires the shared `run_refine` pipeline exactly when this is a key-down
+/// (`Pressed`) event for whichever combo `HotkeyState` currently considers
+/// active — a stale/replaced combo (e.g. one left registered momentarily
+/// during a `hotkey_set` rebind) is ignored rather than double-triggering.
+/// Mirrors the tray's "Refine" entry (`tray::handle_menu_event`): both
+/// funnel into the same pipeline rather than duplicating it.
+///
+/// Returns the spawned task's `JoinHandle` (the real `.with_handler`
+/// closure drops it — detaching, not aborting, the task) so tests can await
+/// it and assert the pipeline actually ran (by its result), rather than
+/// merely "didn't panic".
+pub(crate) fn dispatch_hotkey<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    hotkey_state: &HotkeyState,
+    shortcut: &Shortcut,
+    event: ShortcutEvent,
+) -> Option<tauri::async_runtime::JoinHandle<Result<RefineOutcome, String>>> {
+    if event.state != ShortcutState::Pressed {
+        return None;
+    }
+
+    let is_current_hotkey = hotkey_state
+        .current
+        .lock()
+        .unwrap()
+        .as_deref()
+        .and_then(|combo| Shortcut::from_str(combo).ok())
+        .is_some_and(|current| current == *shortcut);
+    if !is_current_hotkey {
+        return None;
+    }
+
+    let handle = app.clone();
+    Some(tauri::async_runtime::spawn(async move {
+        run_refine(&handle).await
+    }))
 }
 
 /// Returns the text saved by the most recent `refine` call, or an error if
@@ -243,7 +292,14 @@ fn open_stores<R: tauri::Runtime>(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    let hotkey_state = app.state::<HotkeyState>();
+                    dispatch_hotkey(app, &hotkey_state, shortcut, event);
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -458,5 +514,103 @@ mod tests {
             restore_original_buffer(&refine_state),
             Ok("original text".to_string())
         );
+    }
+
+    // ---- dispatch_hotkey ----
+
+    /// Builds a `MockRuntime` app with every store `dispatch_hotkey`'s
+    /// spawned task (`run_refine`) needs managed, plus a `HotkeyState` set
+    /// to `current` (mirrors what `register_default`/`hotkey_set` would
+    /// have set on a real app). No stored connection, so a routed refine
+    /// always bottoms out at `NO_ACTIVE_MODEL_ERROR` -- enough to prove the
+    /// real pipeline ran without a live network call (same trick as
+    /// `tray.rs`'s `tray_refine_propagates_the_pipeline_result`).
+    fn managed_app_with_hotkey(current: Option<&str>) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .expect("failed to build mock app");
+        app.manage(SettingsStore::open_in_memory().expect("failed to open in-memory settings"));
+        app.manage(new_connections());
+        app.manage(RefineState::default());
+
+        let hotkey_state = HotkeyState::default();
+        if let Some(combo) = current {
+            *hotkey_state.current.lock().unwrap() = Some(combo.to_string());
+        }
+        app.manage(hotkey_state);
+
+        app
+    }
+
+    #[tokio::test]
+    async fn dispatch_hotkey_ignores_a_release_event() {
+        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
+        let handle = app.handle().clone();
+        let hotkey_state = app.state::<HotkeyState>();
+        let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
+        let event = ShortcutEvent {
+            id: shortcut.id(),
+            state: ShortcutState::Released,
+        };
+
+        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event);
+        assert!(task.is_none(), "a key-up event must not trigger refine");
+    }
+
+    #[tokio::test]
+    async fn dispatch_hotkey_ignores_a_shortcut_that_is_not_the_current_hotkey() {
+        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
+        let handle = app.handle().clone();
+        let hotkey_state = app.state::<HotkeyState>();
+        // Something other than the currently-registered combo fired -- e.g.
+        // a foreign shortcut sharing the plugin's one global handler.
+        let other = Shortcut::from_str("Ctrl+Alt+T").unwrap();
+        let event = ShortcutEvent {
+            id: other.id(),
+            state: ShortcutState::Pressed,
+        };
+
+        let task = dispatch_hotkey(&handle, &hotkey_state, &other, event);
+        assert!(
+            task.is_none(),
+            "a shortcut other than the current hotkey must not trigger refine"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_hotkey_ignores_events_when_no_hotkey_is_registered_yet() {
+        let app = managed_app_with_hotkey(None);
+        let handle = app.handle().clone();
+        let hotkey_state = app.state::<HotkeyState>();
+        let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
+        let event = ShortcutEvent {
+            id: shortcut.id(),
+            state: ShortcutState::Pressed,
+        };
+
+        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event);
+        assert!(task.is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatch_hotkey_routes_a_matching_press_to_run_refine() {
+        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
+        let handle = app.handle().clone();
+        let hotkey_state = app.state::<HotkeyState>();
+        let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
+        let event = ShortcutEvent {
+            id: shortcut.id(),
+            state: ShortcutState::Pressed,
+        };
+
+        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event)
+            .expect("a matching key-down must spawn the refine pipeline");
+        let result = task
+            .await
+            .expect("the spawned refine task must not itself panic");
+        // No stored connection with an enabled model -> `run_refine` (via
+        // `active_provider`) rejects with `NO_ACTIVE_MODEL_ERROR`, proving
+        // the spawned task reached the real pipeline rather than a stub.
+        assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
     }
 }

@@ -28,6 +28,14 @@ export interface TestData {
     baseUrl: string;
     enabledModels: string[];
   };
+  /** Seeds the mocked `connection_list` command (A7/A14); defaults to `[]`.
+   * App.tsx/Sidebar.tsx call this on boot to resolve the active model. */
+  connections?: {
+    id: string;
+    providerKind: string;
+    baseUrl: string;
+    enabledModels: string[];
+  }[];
   /** Seeds the mocked `refine` command's success response (A9). */
   refineOutcome?: RefineFixture;
   /**

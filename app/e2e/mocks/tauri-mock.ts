@@ -85,11 +85,30 @@ export function getTauriMockScript(data: TestData): string {
                 enabledModels: ['default'],
               }
             );
+          // Boot-time list read (App.tsx/Sidebar.tsx, A14): defaults to \`[]\`
+          // so an unset fixture reads as "no connected provider yet".
+          case 'connection_list':
+            return TEST_DATA.connections ?? [];
 
           // ── Default refine pipeline (A9): capture -> prompt -> model ->
           // inject, all in one backend call. Errors drive the no-active-model
           // (A11) and permission-needed (A13) capture states.
           case 'refine': {
+            if (TEST_DATA.refineError) {
+              throw TEST_DATA.refineError;
+            }
+            const outcome = TEST_DATA.refineOutcome || {
+              original: 'original selection',
+              refined: 'refined selection',
+              model: 'test-model',
+            };
+            state.lastOriginal = outcome.original;
+            return outcome;
+          }
+          // Same pipeline, triggered from the tray's Refine entry instead
+          // of the Capture panel's button (A9/A14) -- shares \`refineOutcome\`/
+          // \`refineError\`, mirroring the real backend's shared \`run_refine\`.
+          case 'tray_refine': {
             if (TEST_DATA.refineError) {
               throw TEST_DATA.refineError;
             }
@@ -113,10 +132,17 @@ export function getTauriMockScript(data: TestData): string {
           }
           case 'inject_text':
             return null;
+          // Cancels the in-flight refine (A9); nothing for the mock to track.
+          case 'cancel_refine':
+            return null;
 
           // ── Tray (A9 display-only carve-out; only tray_quit is wired) ──
           case 'tray_quit':
             return null;
+
+          // ── Hotkey (A6/A14) ──
+          case 'hotkey_set':
+            return { ok: true, conflict: false };
 
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);

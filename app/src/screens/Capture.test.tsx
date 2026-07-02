@@ -9,6 +9,8 @@ vi.mock('@/lib/ipc', () => ({
   injectText: vi.fn(),
   permissionOpenSettings: vi.fn(),
   trayQuit: vi.fn(),
+  NO_ACTIVE_MODEL_ERROR: 'no_active_model',
+  PERMISSION_DENIED_ERROR: 'permission_denied',
 }));
 
 const mockedIpc = vi.mocked(ipc);

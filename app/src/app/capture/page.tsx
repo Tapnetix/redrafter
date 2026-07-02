@@ -4,7 +4,6 @@
 // global hotkey opens this panel in its own window; this route stands in
 // for that trigger for E2E/manual testing.
 import Capture from '@/screens/Capture';
-import '../../../../docs/wireframes/app.css';
 
 export default function CapturePage() {
   return <Capture />;

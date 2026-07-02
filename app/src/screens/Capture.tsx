@@ -23,15 +23,14 @@
 import { useCallback, useState } from 'react';
 import {
   injectText,
+  NO_ACTIVE_MODEL_ERROR,
+  PERMISSION_DENIED_ERROR,
   permissionOpenSettings,
   refine,
   restoreOriginal,
   trayQuit,
   type RefineOutcome,
 } from '@/lib/ipc';
-
-const NO_ACTIVE_MODEL_ERROR = 'no_active_model';
-const PERMISSION_DENIED_ERROR = 'permission_denied';
 
 type PanelState = 'idle' | 'refining' | 'done' | 'no-model' | 'permission';
 

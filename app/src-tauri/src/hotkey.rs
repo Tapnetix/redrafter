@@ -148,9 +148,15 @@ impl<R: tauri::Runtime> ShortcutBackend for AppShortcutBackend<R> {
 
 /// Holds the currently registered hotkey combo. Managed as Tauri state by
 /// A14 and passed into the `hotkey_set` command.
+///
+/// `current` is `pub(crate)` rather than private so `lib.rs`'s global-
+/// shortcut dispatch handler (`dispatch_hotkey`) can read which combo is
+/// "live" when an OS-level shortcut event fires, without a getter method
+/// that would otherwise be this struct's only reason to exist beyond a
+/// plain field.
 #[derive(Default)]
 pub struct HotkeyState {
-    current: Mutex<Option<String>>,
+    pub(crate) current: Mutex<Option<String>>,
 }
 
 /// Registers `DEFAULT_HOTKEY` at startup. Called by A14's setup, not tested

@@ -92,10 +92,19 @@ export interface RefineOutcome {
 }
 
 /**
+ * Rejection strings `refine`/`tray_refine` reject with for those two
+ * specific failure modes. Mirrors the constants of the same name in
+ * `app/src-tauri/src/lib.rs` (`NO_ACTIVE_MODEL_ERROR`/
+ * `PERMISSION_DENIED_ERROR`) — keep both sides in sync if either changes.
+ */
+export const NO_ACTIVE_MODEL_ERROR = 'no_active_model';
+export const PERMISSION_DENIED_ERROR = 'permission_denied';
+
+/**
  * Runs the default refine pipeline (A9/A5): captures the current selection,
  * calls the active model, and blind-injects the result in place, returning
  * the original (for restore), the refined text, and the model used. Rejects
- * with `'no_active_model'` or `'permission_denied'` for those specific
+ * with `NO_ACTIVE_MODEL_ERROR` or `PERMISSION_DENIED_ERROR` for those specific
  * failure modes (A11/A13); other failures reject with a generic message.
  */
 export function refine(): Promise<RefineOutcome> {
