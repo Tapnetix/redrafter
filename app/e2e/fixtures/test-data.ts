@@ -9,8 +9,11 @@
 
 export interface TestData {
   appName: string;
+  /** Seed value for the mocked `permission_status` command (A6). */
+  permissionGranted?: boolean;
 }
 
 export const DEFAULT_TEST_DATA: TestData = {
   appName: 'redrafter',
+  permissionGranted: false,
 };
