@@ -33,6 +33,19 @@ export function getTauriMockScript(data: TestData): string {
       // Command handler map: command name -> handler function
       function handleCommand(cmd, args) {
         switch (cmd) {
+          // ── Permission (A4/A12) ──
+          case 'permission_status':
+            return { granted: TEST_DATA.permissionGranted };
+
+          // ── Settings key-value store (A4), used by General (A12) et al ──
+          case 'settings_get': {
+            const key = args && args.key;
+            const settings = TEST_DATA.settings || {};
+            return Object.prototype.hasOwnProperty.call(settings, key) ? settings[key] : null;
+          }
+          case 'settings_set':
+            return null;
+
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
             return undefined;

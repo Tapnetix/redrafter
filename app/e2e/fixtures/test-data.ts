@@ -9,8 +9,14 @@
 
 export interface TestData {
   appName: string;
+  /** Backs the `permission_status` command's `granted` field. */
+  permissionGranted: boolean;
+  /** Backs `settings_get`/`settings_set`: key -> stored value. */
+  settings: Record<string, string>;
 }
 
 export const DEFAULT_TEST_DATA: TestData = {
   appName: 'redrafter',
+  permissionGranted: true,
+  settings: {},
 };
