@@ -27,6 +27,10 @@ text-inject = { path = "../../crates/text-inject" }
 
 [dev-dependencies]
 async-trait = "0.1"
+# `tauri`'s "test" feature powers `tests/wireup_test.rs` (MockRuntime +
+# `tauri::test::get_ipc_response`), letting it assert the production invoke
+# handler's registered command set without a real window/OS integration.
+tauri = { version = "2", features = ["tray-icon", "test"] }
 
 [features]
 default = ["custom-protocol"]

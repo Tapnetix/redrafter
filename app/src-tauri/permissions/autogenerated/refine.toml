@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-refine"
+description = "Enables the refine command without any pre-configured scope."
+commands.allow = ["refine"]
+
+[[permission]]
+identifier = "deny-refine"
+description = "Denies the refine command without any pre-configured scope."
+commands.deny = ["refine"]

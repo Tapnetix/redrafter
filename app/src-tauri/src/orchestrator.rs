@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use llm_provider::LlmProvider;
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::prompt_builder::{self, BuildOptions};
@@ -54,7 +55,13 @@ impl TextInjector for SystemTextIo {
 
 /// The result of a successful [`Orchestrator::refine`] call, consumed by
 /// the frontend/tray.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Serialize` is derived (rather than left for A14 to wrap) so this type
+/// can be returned directly from the `refine` Tauri command A14's
+/// composition root (`lib.rs`) registers; field names already match the
+/// frontend's `RefineOutcome` (`app/src/lib/ipc.ts`) with no renaming
+/// needed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RefineOutcome {
     pub original: String,
     pub refined: String,
