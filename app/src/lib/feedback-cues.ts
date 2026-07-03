@@ -78,13 +78,20 @@ export function useFeedbackCues(): FeedbackCueState {
       hudTimer.current = setTimeout(() => setHud(false), HUD_FLASH_MS);
     };
 
+    // The `.catch(() => {})` on each subscription is load-bearing: outside a
+    // Tauri runtime (unit tests, a non-Tauri browser context, or a boot race
+    // before `__TAURI_INTERNALS__` is injected) `listen()` rejects, and an
+    // unhandled rejection here fails the whole Vitest run (surfaced on the CI
+    // macOS agent). The cues simply no-op when the event system isn't present.
     void listen<FeedbackCue[]>(REFINE_FEEDBACK_START_EVENT, (event) => {
       const cues = event.payload ?? [];
       if (cues.includes('spinner')) setSpinner(true);
-    }).then((un) => {
-      if (disposed) un();
-      else unlistenStart = un;
-    });
+    })
+      .then((un) => {
+        if (disposed) un();
+        else unlistenStart = un;
+      })
+      .catch(() => {});
 
     void listen<FeedbackCue[]>(REFINE_FEEDBACK_DONE_EVENT, (event) => {
       const cues = event.payload ?? [];
@@ -92,10 +99,12 @@ export function useFeedbackCues(): FeedbackCueState {
       setSpinner(false);
       if (cues.includes('hud')) flashHud();
       // 'sound' is played natively by the backend — nothing to do here.
-    }).then((un) => {
-      if (disposed) un();
-      else unlistenDone = un;
-    });
+    })
+      .then((un) => {
+        if (disposed) un();
+        else unlistenDone = un;
+      })
+      .catch(() => {});
 
     return () => {
       disposed = true;
