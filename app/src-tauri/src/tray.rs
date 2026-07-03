@@ -20,14 +20,9 @@ use tauri::{
 };
 
 use crate::connections::ConnectionStore;
+use crate::lifecycle::launch_at_login_enabled;
 use crate::models::{self, CuratedModel, ModelsListResult};
 use crate::settings::SettingsStore;
-
-/// Settings key `tray_set_launch_login`/the native "Launch at login" item
-/// persist the preference under. Unset defaults to `true` (mirrors
-/// `Tray.tsx`'s own default), matching the plan's "on by default, opt out"
-/// framing for a capture-utility app.
-const LAUNCH_AT_LOGIN_SETTING_KEY: &str = "launch_at_login";
 
 /// Prefix for a model-pick menu item's id, followed by a JSON-encoded
 /// `(connection_id, model_id)` pair (mirrors `models.rs`'s own `model_key`)
@@ -187,12 +182,7 @@ fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
         stale_active_model_id: None,
     });
     let paused = crate::is_paused(&settings);
-    let launch_at_login = settings
-        .get(LAUNCH_AT_LOGIN_SETTING_KEY)
-        .ok()
-        .flatten()
-        .map(|v| v != "false")
-        .unwrap_or(true);
+    let launch_at_login = launch_at_login_enabled(&settings);
 
     let refine_item = MenuItemBuilder::with_id("refine", "Refine selection")
         .enabled(!paused)
@@ -310,7 +300,7 @@ fn menu_action_for(id: &str) -> MenuAction {
 /// so it's untestable glue, same carve-out as `setup_tray`'s menu
 /// construction; the *routing* it depends on is covered by
 /// `menu_action_for`'s tests, and the state each action ultimately mutates
-/// by `models`/`lib`/`set_launch_at_login_impl`'s own tests.
+/// by `models`/`lib`/`lifecycle::set_launch_at_login_impl`'s own tests.
 fn handle_menu_event<R: Runtime>(app: &tauri::AppHandle<R>, id: &str) {
     match menu_action_for(id) {
         MenuAction::Refine => {
@@ -349,14 +339,9 @@ fn handle_menu_event<R: Runtime>(app: &tauri::AppHandle<R>, id: &str) {
         }
         MenuAction::ToggleLaunchLogin => {
             let settings = app.state::<SettingsStore>();
-            let current = settings
-                .get(LAUNCH_AT_LOGIN_SETTING_KEY)
-                .ok()
-                .flatten()
-                .map(|v| v != "false")
-                .unwrap_or(true);
-            let controller = RealLaunchAtLogin(app.clone());
-            if let Err(e) = set_launch_at_login_impl(&controller, &settings, !current) {
+            let current = launch_at_login_enabled(&settings);
+            if let Err(e) = crate::lifecycle::tray_set_launch_login(app.clone(), settings, !current)
+            {
                 eprintln!("[tray] failed to toggle launch at login: {e}");
             }
             refresh_tray(app);
@@ -366,18 +351,19 @@ fn handle_menu_event<R: Runtime>(app: &tauri::AppHandle<R>, id: &str) {
     }
 }
 
-/// Runs a real update check (`tauri-plugin-updater`) and refreshes the tray
-/// with the result. Split out from `handle_menu_event`'s `"check-updates"`
-/// arm only so the async body isn't inlined in a `match` arm; still not
-/// unit-tested (see `handle_menu_event`'s doc note) since the plugin state
-/// it needs isn't managed under `MockRuntime`.
+/// Runs a real update check (via `lifecycle::tray_check_updates`, C2) and
+/// refreshes the tray tooltip with the result. Split out from
+/// `handle_menu_event`'s `"check-updates"` arm only so the async body isn't
+/// inlined in a `match` arm; still not unit-tested (see `handle_menu_event`'s
+/// doc note) since the plugin state it needs isn't managed under
+/// `MockRuntime` -- see `lifecycle::tray_check_updates`'s own tests for the
+/// update-available/up-to-date/error mapping this reuses.
 async fn check_for_updates<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| e.to_string())?;
-    let message = match update {
-        Some(update) => format!("Update available: {}", update.version),
-        None => "Ready".to_string(),
+    let result = crate::lifecycle::tray_check_updates(app.clone()).await?;
+    let message = if result.update_available {
+        format!("Update available: {}", result.version.unwrap_or_default())
+    } else {
+        "Ready".to_string()
     };
     set_status_message(app, &message);
     Ok(())
@@ -442,101 +428,6 @@ pub fn tray_resume<R: Runtime>(
     settings: tauri::State<'_, SettingsStore>,
 ) -> Result<(), String> {
     crate::set_paused(&settings, false)?;
-    refresh_tray(&app);
-    Ok(())
-}
-
-/// Result of a `tray_check_updates` call: whether a newer version is
-/// available, and which one. Mirrors `ipc.ts`'s `CheckUpdatesResult`
-/// (`#[serde(rename_all = "camelCase")]`).
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckUpdatesResult {
-    pub update_available: bool,
-    pub version: Option<String>,
-}
-
-/// Maps whether an update is available (and, if so, its version) into the
-/// wire shape `tray_check_updates` resolves with. Pulled out so this
-/// mapping is unit-testable without a live updater-endpoint network call --
-/// see `handle_menu_event`'s doc note for why the command itself isn't.
-fn check_updates_result(available_version: Option<String>) -> CheckUpdatesResult {
-    match available_version {
-        Some(version) => CheckUpdatesResult {
-            update_available: true,
-            version: Some(version),
-        },
-        None => CheckUpdatesResult {
-            update_available: false,
-            version: None,
-        },
-    }
-}
-
-/// Tauri command: triggers an application-update check from the tray/the
-/// in-app tray preview (`Tray.tsx`), via `tauri-plugin-updater`.
-#[tauri::command]
-pub async fn tray_check_updates<R: Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<CheckUpdatesResult, String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| e.to_string())?;
-    Ok(check_updates_result(update.map(|u| u.version)))
-}
-
-/// The seam behind [`tray_set_launch_login`]'s real `tauri-plugin-autostart`
-/// call, so [`set_launch_at_login_impl`] (the settings-persistence half of
-/// the command) is unit-testable with a fake, independent of the plugin's
-/// managed state (unavailable under `tauri::test::MockRuntime` -- see
-/// `handle_menu_event`'s doc note).
-trait LaunchAtLoginController {
-    fn set_enabled(&self, enabled: bool) -> Result<(), String>;
-}
-
-/// Production [`LaunchAtLoginController`], backed by
-/// `tauri_plugin_autostart`'s real `AutoLaunchManager`.
-struct RealLaunchAtLogin<R: Runtime>(tauri::AppHandle<R>);
-
-impl<R: Runtime> LaunchAtLoginController for RealLaunchAtLogin<R> {
-    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
-        use tauri_plugin_autostart::ManagerExt;
-        let manager = self.0.autolaunch();
-        let result = if enabled {
-            manager.enable()
-        } else {
-            manager.disable()
-        };
-        result.map_err(|e| e.to_string())
-    }
-}
-
-/// Toggles launch-at-login through `controller` and persists the choice.
-/// Generic over [`LaunchAtLoginController`] (mirrors `permission_gate`'s
-/// `AccessibilityChecker` pattern in `lib.rs`) so this is unit-testable with
-/// a fake instead of the real OS-level autostart mechanism.
-fn set_launch_at_login_impl<C: LaunchAtLoginController>(
-    controller: &C,
-    settings: &SettingsStore,
-    enabled: bool,
-) -> Result<(), String> {
-    controller.set_enabled(enabled)?;
-    settings
-        .set(LAUNCH_AT_LOGIN_SETTING_KEY, if enabled { "true" } else { "false" })
-        .map_err(|e| e.to_string())
-}
-
-/// Tauri command: toggles whether redrafter launches automatically at
-/// login (`Tray.tsx`'s "Launch at login"), persisting the preference and
-/// driving the real `tauri-plugin-autostart` (see [`RealLaunchAtLogin`]).
-#[tauri::command]
-pub fn tray_set_launch_login<R: Runtime>(
-    app: tauri::AppHandle<R>,
-    settings: tauri::State<'_, SettingsStore>,
-    enabled: bool,
-) -> Result<(), String> {
-    let controller = RealLaunchAtLogin(app.clone());
-    set_launch_at_login_impl(&controller, &settings, enabled)?;
     refresh_tray(&app);
     Ok(())
 }
@@ -931,73 +822,8 @@ mod tests {
         assert_eq!(parse_model_menu_id("quit"), None);
     }
 
-    // ---- check_updates_result ----
-
-    #[test]
-    fn check_updates_result_reports_no_update_for_none() {
-        assert_eq!(
-            check_updates_result(None),
-            CheckUpdatesResult {
-                update_available: false,
-                version: None,
-            }
-        );
-    }
-
-    #[test]
-    fn check_updates_result_reports_the_available_version() {
-        assert_eq!(
-            check_updates_result(Some("1.2.3".to_string())),
-            CheckUpdatesResult {
-                update_available: true,
-                version: Some("1.2.3".to_string()),
-            }
-        );
-    }
-
-    // ---- set_launch_at_login_impl (fake controller) ----
-
-    #[derive(Default)]
-    struct FakeLaunchController {
-        calls: std::sync::Mutex<Vec<bool>>,
-        fail: bool,
-    }
-
-    impl LaunchAtLoginController for FakeLaunchController {
-        fn set_enabled(&self, enabled: bool) -> Result<(), String> {
-            if self.fail {
-                return Err("simulated autostart failure".to_string());
-            }
-            self.calls.lock().unwrap().push(enabled);
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn set_launch_at_login_impl_calls_the_controller_and_persists_the_choice() {
-        let settings = SettingsStore::open_in_memory().unwrap();
-        let controller = FakeLaunchController::default();
-
-        set_launch_at_login_impl(&controller, &settings, false).unwrap();
-
-        assert_eq!(*controller.calls.lock().unwrap(), vec![false]);
-        assert_eq!(
-            settings.get(LAUNCH_AT_LOGIN_SETTING_KEY).unwrap(),
-            Some("false".to_string())
-        );
-    }
-
-    #[test]
-    fn set_launch_at_login_impl_does_not_persist_when_the_controller_fails() {
-        let settings = SettingsStore::open_in_memory().unwrap();
-        let controller = FakeLaunchController {
-            fail: true,
-            ..Default::default()
-        };
-
-        let err = set_launch_at_login_impl(&controller, &settings, true).unwrap_err();
-
-        assert!(err.contains("simulated"), "got: {err}");
-        assert_eq!(settings.get(LAUNCH_AT_LOGIN_SETTING_KEY).unwrap(), None);
-    }
+    // `check_updates_result`/`set_launch_at_login_impl` and their tests moved
+    // to `lifecycle.rs` (C2) -- this module now calls through
+    // `crate::lifecycle::{tray_check_updates, tray_set_launch_login}`
+    // instead of owning that logic itself.
 }

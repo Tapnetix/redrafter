@@ -5,11 +5,23 @@
 // the combo through the plugin's shortcut manager rather than intercepting
 // raw keystrokes.
 //
-// The public command surface is `hotkey_set` (the same name C2/C6 later
-// extend for rebinding); A14's composition root (`lib.rs`) is responsible
-// for wiring it into the Tauri builder's invoke handler and for managing
-// `HotkeyState`. Everything else here (`apply_combo`, `ShortcutBackend`,
-// `InMemoryRegistry`) is a private/internal helper.
+// The public command surface is `hotkey_set` (the same name A4 built and
+// C6 later builds a rebind dialog on top of); A14's composition root
+// (`lib.rs`) is responsible for wiring it into the Tauri builder's invoke
+// handler and for managing `HotkeyState`. Everything else here
+// (`apply_combo`, `ShortcutBackend`, `InMemoryRegistry`) is a
+// private/internal helper.
+//
+// C2 adds persistence on top of A4's register-new-first/conflict-detection
+// logic: `hotkey_set` writes a successful rebind to `SettingsStore` (see
+// `persist_result`), and `register_startup` reads it back at launch (see
+// `startup_combo`) so a rebind survives a restart instead of always coming
+// back up on `DEFAULT_HOTKEY`. A conflict -- whether the combo is already
+// claimed within this app, by another app, or by the OS, all of which
+// `AppShortcutBackend::register` surfaces identically -- never persists and
+// never touches the previously-registered combo (`apply_combo`'s
+// register-new-first rollback), so the user is never left without a
+// working hotkey.
 //
 // (Plain `//` rather than a `//!` module doc: this file is also pulled into
 // `tests/core_test.rs` via `include!` inside an inline `mod` block, and
@@ -22,8 +34,16 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use tauri_plugin_global_shortcut::Shortcut;
 
+use crate::settings::SettingsStore;
+
 /// Default global hotkey, matching the wireframe (`⌃⌥R`).
 pub const DEFAULT_HOTKEY: &str = "Ctrl+Alt+R";
+
+/// Settings key the current hotkey combo persists under. `hotkey_set`
+/// writes it on every successful rebind (see `persist_result`); the app's
+/// startup (`register_startup`) reads it back so a rebind survives a
+/// restart instead of always coming back up on `DEFAULT_HOTKEY`.
+const HOTKEY_SETTING_KEY: &str = "hotkey_combo";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct HotkeySetResult {
@@ -159,37 +179,78 @@ pub struct HotkeyState {
     pub(crate) current: Mutex<Option<String>>,
 }
 
-/// Registers `DEFAULT_HOTKEY` at startup. Called by A14's setup, not tested
-/// here since it needs a live app/OS shortcut manager.
-pub fn register_default<R: tauri::Runtime>(
+/// The combo `register_startup` should register at launch: a previously
+/// persisted rebind (`hotkey_set`'s `HOTKEY_SETTING_KEY` write) if one
+/// exists, otherwise `DEFAULT_HOTKEY`. Pure lookup, extracted out of
+/// `register_startup` so it's unit-testable without a live shortcut
+/// manager.
+fn startup_combo(settings: &SettingsStore) -> String {
+    settings
+        .get(HOTKEY_SETTING_KEY)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| DEFAULT_HOTKEY.to_string())
+}
+
+/// Registers the persisted hotkey combo (or `DEFAULT_HOTKEY`, see
+/// `startup_combo`) at startup. Called by A14's setup (`lib.rs`); not
+/// tested here since it needs a live app/OS shortcut manager -- the
+/// persisted-vs-default combo choice itself is `startup_combo`'s test.
+pub fn register_startup<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     state: &HotkeyState,
+    settings: &SettingsStore,
 ) -> Result<HotkeySetResult, HotkeyError> {
+    let combo = startup_combo(settings);
     let backend = AppShortcutBackend(app.clone());
-    let result = apply_combo(&backend, None, DEFAULT_HOTKEY)?;
+    let result = apply_combo(&backend, None, &combo)?;
     if result.ok {
-        *state.current.lock().unwrap() = Some(DEFAULT_HOTKEY.to_string());
+        *state.current.lock().unwrap() = Some(combo);
     }
     Ok(result)
 }
 
+/// Updates `state.current` and persists `combo` under `HOTKEY_SETTING_KEY`,
+/// but only when `result.ok` -- a conflict must leave both the in-memory
+/// and persisted combo untouched (the user keeps their working hotkey).
+/// Split out of the `hotkey_set` command so the persistence behavior is
+/// unit-testable without a Tauri command/App, mirroring `apply_combo`'s own
+/// split.
+fn persist_result(
+    state: &HotkeyState,
+    settings: &SettingsStore,
+    combo: &str,
+    result: &HotkeySetResult,
+) -> Result<(), String> {
+    if !result.ok {
+        return Ok(());
+    }
+    *state.current.lock().unwrap() = Some(combo.to_string());
+    settings
+        .set(HOTKEY_SETTING_KEY, combo)
+        .map_err(|e| e.to_string())
+}
+
 /// Tauri command: saves `combo` as the new global hotkey, unregistering the
-/// previous one first. Returns `conflict: true` when `combo` is already
-/// registered elsewhere rather than erroring. Registered into the invoke
-/// handler by A14 (`lib.rs`), which manages `HotkeyState`; C2/C6 later reuse
-/// this same command for rebinding.
+/// previous one first, and persists it so a rebind survives a restart (see
+/// `persist_result`/`register_startup`). Returns `conflict: true` when
+/// `combo` is already registered elsewhere (by this app, another app, or
+/// the OS -- the real `AppShortcutBackend::register` call surfaces all
+/// three the same way) rather than erroring, so a rejected rebind never
+/// leaves the app hotkey-less. Registered into the invoke handler by A14
+/// (`lib.rs`), which manages `HotkeyState`; C6 later builds the rebind
+/// dialog (S34) on top of this same command.
 #[tauri::command]
 pub fn hotkey_set<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, HotkeyState>,
+    settings: tauri::State<'_, SettingsStore>,
     combo: String,
 ) -> Result<HotkeySetResult, String> {
     let backend = AppShortcutBackend(app);
     let previous = state.current.lock().unwrap().clone();
     let result = apply_combo(&backend, previous.as_deref(), &combo).map_err(|e| e.to_string())?;
-    if result.ok {
-        *state.current.lock().unwrap() = Some(combo);
-    }
+    persist_result(&state, &settings, &combo, &result)?;
     Ok(result)
 }
 
@@ -299,5 +360,62 @@ mod tests {
             apply_combo(&backend, None, "NotAKey"),
             Err(HotkeyError::InvalidCombo("NotAKey".to_string()))
         );
+    }
+
+    // ---- persist_result / startup_combo (C2: rebind persistence) ----
+
+    #[test]
+    fn persist_result_saves_the_combo_on_success() {
+        let hotkey_state = HotkeyState::default();
+        let settings = SettingsStore::open_in_memory().unwrap();
+        let result = HotkeySetResult {
+            ok: true,
+            conflict: false,
+        };
+
+        persist_result(&hotkey_state, &settings, "Ctrl+Alt+S", &result).unwrap();
+
+        assert_eq!(
+            *hotkey_state.current.lock().unwrap(),
+            Some("Ctrl+Alt+S".to_string())
+        );
+        assert_eq!(
+            settings.get(HOTKEY_SETTING_KEY).unwrap(),
+            Some("Ctrl+Alt+S".to_string())
+        );
+    }
+
+    #[test]
+    fn persist_result_does_nothing_on_conflict() {
+        let hotkey_state = HotkeyState::default();
+        *hotkey_state.current.lock().unwrap() = Some(DEFAULT_HOTKEY.to_string());
+        let settings = SettingsStore::open_in_memory().unwrap();
+        let result = HotkeySetResult {
+            ok: false,
+            conflict: true,
+        };
+
+        persist_result(&hotkey_state, &settings, "Ctrl+Alt+T", &result).unwrap();
+
+        // Neither the in-memory state nor the persisted combo changed --
+        // the user's working hotkey survives a rejected rebind attempt.
+        assert_eq!(
+            *hotkey_state.current.lock().unwrap(),
+            Some(DEFAULT_HOTKEY.to_string())
+        );
+        assert_eq!(settings.get(HOTKEY_SETTING_KEY).unwrap(), None);
+    }
+
+    #[test]
+    fn startup_combo_falls_back_to_the_default_when_nothing_is_persisted() {
+        let settings = SettingsStore::open_in_memory().unwrap();
+        assert_eq!(startup_combo(&settings), DEFAULT_HOTKEY);
+    }
+
+    #[test]
+    fn startup_combo_returns_the_persisted_combo_when_present() {
+        let settings = SettingsStore::open_in_memory().unwrap();
+        settings.set(HOTKEY_SETTING_KEY, "Ctrl+Alt+S").unwrap();
+        assert_eq!(startup_combo(&settings), "Ctrl+Alt+S");
     }
 }

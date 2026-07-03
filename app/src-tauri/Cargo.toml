@@ -24,6 +24,11 @@ tokio-util = "0.7"
 rusqlite = { version = "0.31", features = ["bundled"] }
 llm-provider = { path = "../../crates/llm-provider" }
 text-inject = { path = "../../crates/text-inject" }
+# lifecycle.rs (C2): `UpdateApplier`'s async trait method, mirroring
+# `llm-provider`'s own `LlmProvider` trait -- promoted from a dev-only
+# dependency (used there for in-test fakes) to a real one since this trait
+# lives in production code, not just `#[cfg(test)]`.
+async-trait = "0.1"
 # B10 (secrets.rs): AES-256-GCM for the default encrypted-file key store,
 # plus the base64 encoding its on-disk (nonce || ciphertext+tag) blobs use.
 # Both were already resolved transitively (via reqwest/tauri's TLS stack),
@@ -40,7 +45,6 @@ base64 = "0.22"
 security-framework = "3"
 
 [dev-dependencies]
-async-trait = "0.1"
 # `tauri`'s "test" feature powers `tests/wireup_test.rs` (MockRuntime +
 # `tauri::test::get_ipc_response`), letting it assert the production invoke
 # handler's registered command set without a real window/OS integration.
