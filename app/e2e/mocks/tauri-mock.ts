@@ -61,11 +61,93 @@ export function getTauriMockScript(data: TestData): string {
         favorites: new Set(
           (TEST_DATA.favoriteModels || []).map((f) => modelKey(f.connectionId, f.modelId)),
         ),
+        // User-saved preset rows (C3/C3b), keyed by (normalized) trigger --
+        // mirrors \`presets.rs\`'s PresetStore's SQLite table. Seeded from
+        // TEST_DATA.presets via the same upsert \`preset_save\` itself uses,
+        // so a fixture preset and one saved mid-test are indistinguishable.
+        presetsUser: {},
       };
 
       function findConnection(id) {
         return state.connections.find((c) => c.id === id);
       }
+
+      // ── Presets (C3/C3b): mirrors presets.rs's PresetStore ──
+      function presetNormalizeTrigger(trigger) {
+        return String(trigger == null ? '' : trigger).trim().toLowerCase();
+      }
+
+      // The shipped built-in set -- mirrors presets.rs's built_in_presets().
+      function presetBuiltins() {
+        return [
+          {
+            trigger: 'formal',
+            direction: 'Rewrite formally and professionally; no slang or emoji; keep meaning.',
+          },
+          { trigger: 'concise', direction: 'Tighten: cut filler, shorten, keep the point.' },
+          { trigger: 'friendly', direction: 'Warmer, more personable tone; keep it natural.' },
+          { trigger: 'bullets', direction: 'Restructure into clear, scannable bullet points.' },
+          { trigger: 'reply', direction: 'Draft a reply to the quoted message.' },
+        ].map((p) =>
+          Object.assign(
+            { model: null, lang: null, inject: null, examples: [], builtin: true, overridden: false },
+            p,
+          ),
+        );
+      }
+
+      function presetIsBuiltinTrigger(trigger) {
+        return presetBuiltins().some((p) => p.trigger === trigger);
+      }
+
+      function presetUpsert(trigger, direction, model, lang, inject, examples) {
+        const normalized = presetNormalizeTrigger(trigger);
+        if (!normalized) throw 'preset trigger must not be empty';
+        state.presetsUser[normalized] = {
+          trigger: normalized,
+          direction,
+          model: model || null,
+          lang: lang || null,
+          inject: inject || null,
+          examples: examples || [],
+        };
+        return presetResolve(normalized);
+      }
+
+      function presetResolve(trigger) {
+        const normalized = presetNormalizeTrigger(trigger);
+        const row = state.presetsUser[normalized];
+        if (row) {
+          const builtin = presetIsBuiltinTrigger(normalized);
+          return Object.assign({}, row, { builtin, overridden: builtin });
+        }
+        return presetBuiltins().find((p) => p.trigger === normalized) || null;
+      }
+
+      function presetListAll() {
+        const out = [];
+        presetBuiltins().forEach((builtin) => {
+          const row = state.presetsUser[builtin.trigger];
+          if (row) {
+            out.push(Object.assign({}, row, { builtin: true, overridden: true }));
+          } else {
+            out.push(builtin);
+          }
+        });
+        Object.keys(state.presetsUser)
+          .filter((trigger) => !presetIsBuiltinTrigger(trigger))
+          .sort()
+          .forEach((trigger) => {
+            out.push(Object.assign({}, state.presetsUser[trigger], { builtin: false, overridden: false }));
+          });
+        return out;
+      }
+
+      // Seed the user store from TEST_DATA.presets the same way preset_save
+      // would (after the helpers above are defined).
+      (TEST_DATA.presets || []).forEach((p) => {
+        presetUpsert(p.trigger, p.direction, p.model, p.lang, p.inject, p.examples || []);
+      });
 
       // Opaque per-(connection, model) key mirroring \`models.rs\`'s
       // \`model_key\` — never parsed apart, just compared for equality.
@@ -385,6 +467,62 @@ export function getTauriMockScript(data: TestData): string {
           // ── Hotkey (A6/A14) ──
           case 'hotkey_set':
             return { ok: true, conflict: false };
+
+          // ── Presets (C3/C3b): built-in + user store, used by Presets.tsx ──
+          case 'preset_list':
+            return presetListAll();
+          case 'preset_save': {
+            const a = args || {};
+            return presetUpsert(a.trigger, a.direction, a.model, a.lang, a.inject, a.examples || []);
+          }
+          case 'preset_delete': {
+            const trigger = presetNormalizeTrigger(args && args.trigger);
+            if (!Object.prototype.hasOwnProperty.call(state.presetsUser, trigger)) {
+              throw \`no such preset: \${trigger}\`;
+            }
+            delete state.presetsUser[trigger];
+            return null;
+          }
+          case 'preset_duplicate': {
+            const source = presetResolve(args && args.trigger);
+            if (!source) throw \`no such preset: \${presetNormalizeTrigger(args && args.trigger)}\`;
+            const newTrigger = presetNormalizeTrigger(args && args.newTrigger);
+            if (!newTrigger) throw 'preset trigger must not be empty';
+            if (Object.prototype.hasOwnProperty.call(state.presetsUser, newTrigger)) {
+              throw \`a preset with trigger \${newTrigger} already exists\`;
+            }
+            return presetUpsert(newTrigger, source.direction, source.model, source.lang, source.inject, source.examples);
+          }
+          case 'preset_reset_default': {
+            const trigger = presetNormalizeTrigger(args && args.trigger);
+            if (!presetIsBuiltinTrigger(trigger)) throw \`\${trigger} is not a built-in preset\`;
+            if (!Object.prototype.hasOwnProperty.call(state.presetsUser, trigger)) {
+              throw \`\${trigger} has no override to reset\`;
+            }
+            delete state.presetsUser[trigger];
+            return null;
+          }
+          case 'preset_export':
+            return JSON.stringify(Object.values(state.presetsUser), null, 2);
+          case 'preset_import': {
+            const raw = (args && args.json) || '[]';
+            let incoming;
+            try {
+              incoming = JSON.parse(raw);
+            } catch (e) {
+              throw 'invalid preset import JSON';
+            }
+            const result = { imported: [], conflicts: [] };
+            incoming.forEach((p) => {
+              const trigger = presetNormalizeTrigger(p.trigger);
+              if (!trigger) return;
+              const existed = !!presetResolve(trigger);
+              presetUpsert(trigger, p.direction, p.model, p.lang, p.inject, p.examples || []);
+              if (existed) result.conflicts.push(trigger);
+              result.imported.push(trigger);
+            });
+            return result;
+          }
 
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);

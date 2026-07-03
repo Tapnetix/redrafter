@@ -125,6 +125,22 @@ export interface TestData {
   /** Canned response for the mocked `tray_check_updates` command (B17).
    * Defaults to `{ updateAvailable: false }` (already up to date). */
   updateCheckResult?: { updateAvailable: boolean; version?: string | null };
+  /**
+   * Seeds the mocked preset store's user-saved rows (C3/C3b): each entry
+   * upserts into the mock's user table exactly like a prior `preset_save`
+   * call would, so `preset_list`/`preset_resolve` reflect it immediately —
+   * including a builtin-trigger entry here to start a spec with an
+   * already-overridden default. Leave unset to start with just the 5
+   * shipped built-ins (`formal`/`concise`/`friendly`/`bullets`/`reply`).
+   */
+  presets?: {
+    trigger: string;
+    direction: string;
+    model?: string | null;
+    lang?: string | null;
+    inject?: string | null;
+    examples?: { before: string; after: string }[];
+  }[];
 }
 
 export const DEFAULT_TEST_DATA: TestData = {
