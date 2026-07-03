@@ -441,7 +441,7 @@ async fn refine<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<RefineFlo
 /// Reacts to an OS-level event for any hotkey registered through
 /// `tauri-plugin-global-shortcut` — the plugin dispatches every registered
 /// shortcut's events through the one `.with_handler` closure `run` installs
-/// below, not just whichever combo is "current" (`register_default` at
+/// below, not just whichever combo is "current" (`register_startup` at
 /// startup and `hotkey_set` rebinds both go through the same plugin
 /// manager). This is that closure's body, pulled out so it's unit-testable
 /// under `tauri::test::MockRuntime` with a synthetic `Shortcut`/
