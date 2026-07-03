@@ -114,6 +114,17 @@ export interface TestData {
    * instead of resolving (B22's pull-failure state).
    */
   ollamaPullError?: string;
+  /** Seeds the mocked tray's initial paused state (B17): whether global
+   * capturing starts paused, mirroring the `paused` settings key
+   * `tray_pause`/`tray_resume` persist. Defaults to `false`. */
+  paused?: boolean;
+  /** Seeds the mocked tray's initial launch-at-login state (B17), mirroring
+   * the `launch_at_login` settings key `tray_set_launch_login` persists.
+   * Defaults to `true` (per wireframes/tray.html's default checked state). */
+  launchAtLogin?: boolean;
+  /** Canned response for the mocked `tray_check_updates` command (B17).
+   * Defaults to `{ updateAvailable: false }` (already up to date). */
+  updateCheckResult?: { updateAvailable: boolean; version?: string | null };
 }
 
 export const DEFAULT_TEST_DATA: TestData = {

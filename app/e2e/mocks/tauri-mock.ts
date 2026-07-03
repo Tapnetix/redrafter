@@ -28,7 +28,16 @@ export function getTauriMockScript(data: TestData): string {
       // this rather than TEST_DATA itself.
       const state = {
         permissionGranted: !!TEST_DATA.permissionGranted,
-        settings: Object.assign({}, TEST_DATA.settings || {}),
+        // 'paused'/'launch_at_login' mirror the settings keys the real
+        // tray_pause/tray_resume/tray_set_launch_login commands persist
+        // (B17); TEST_DATA.settings can still override them directly.
+        settings: Object.assign(
+          {
+            paused: String(!!TEST_DATA.paused),
+            launch_at_login: String(TEST_DATA.launchAtLogin !== false),
+          },
+          TEST_DATA.settings || {},
+        ),
         // Mirrors the orchestrator's restore buffer (A9): the original text
         // from the most recent successful \`refine\`, for \`restore_original\`.
         lastOriginal: null,
@@ -318,7 +327,14 @@ export function getTauriMockScript(data: TestData): string {
           // Same pipeline, triggered from the tray's Refine entry instead
           // of the Capture panel's button (A9/A14) -- shares \`refineOutcome\`/
           // \`refineError\`, mirroring the real backend's shared \`run_refine\`.
+          // While paused (B17), the real backend suspends both the hotkey
+          // and this tray entry point -- the mock enforces that too, so a
+          // spec calling this directly (bypassing the frontend's own guard)
+          // still observes the suspension.
           case 'tray_refine': {
+            if (state.settings.paused === 'true') {
+              throw 'paused';
+            }
             if (TEST_DATA.refineError) {
               throw TEST_DATA.refineError;
             }
@@ -349,6 +365,22 @@ export function getTauriMockScript(data: TestData): string {
           // ── Tray (A9 display-only carve-out; only tray_quit is wired) ──
           case 'tray_quit':
             return null;
+
+          // ── Tray status and pause (B17): persists via the same settings
+          // keys General/other screens use, mirroring the real backend. ──
+          case 'tray_pause':
+            state.settings.paused = 'true';
+            return null;
+          case 'tray_resume':
+            state.settings.paused = 'false';
+            return null;
+          case 'tray_check_updates':
+            return TEST_DATA.updateCheckResult || { updateAvailable: false, version: null };
+          case 'tray_set_launch_login': {
+            const enabled = !!(args && args.enabled);
+            state.settings.launch_at_login = String(enabled);
+            return null;
+          }
 
           // ── Hotkey (A6/A14) ──
           case 'hotkey_set':
