@@ -32,6 +32,11 @@ export function getTauriMockScript(data: TestData): string {
         // Mirrors the orchestrator's restore buffer (A9): the original text
         // from the most recent successful \`refine\`, for \`restore_original\`.
         lastOriginal: null,
+        // Whether \`refine\` has rejected with \`refineFailure\` at least once
+        // yet (B6) — only the first call fails unless \`refineFailureRepeats\`
+        // is set, so a retry (\`capture-retry\`) can simulate a fallback chain
+        // eventually succeeding.
+        refineFailed: false,
       };
 
       // Log of every invoked command, exposed on window so specs can assert
@@ -92,10 +97,19 @@ export function getTauriMockScript(data: TestData): string {
 
           // ── Default refine pipeline (A9): capture -> prompt -> model ->
           // inject, all in one backend call. Errors drive the no-active-model
-          // (A11) and permission-needed (A13) capture states.
+          // (A11) and permission-needed (A13) capture states. A generic
+          // \`refineFailure\` (B6) drives the error/retry state instead --
+          // only the first call fails (unless \`refineFailureRepeats\`), so
+          // retrying (\`capture-retry\`) can simulate a fallback chain
+          // eventually succeeding. \`refineOutcome.status\` (B5/B6) drives the
+          // review-and-confirm state instead of a blind inject.
           case 'refine': {
             if (TEST_DATA.refineError) {
               throw TEST_DATA.refineError;
+            }
+            if (TEST_DATA.refineFailure && (!state.refineFailed || TEST_DATA.refineFailureRepeats)) {
+              state.refineFailed = true;
+              throw TEST_DATA.refineFailure;
             }
             const outcome = TEST_DATA.refineOutcome || {
               original: 'original selection',
