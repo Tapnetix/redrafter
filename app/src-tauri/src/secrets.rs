@@ -439,6 +439,9 @@ pub fn set_storage_backend(
 ///
 /// Registered as `secrets_set_key` (not `secrets_set` -- see the module
 /// docs' "The `secrets_set` name" section for why).
+// orphan-ok: forward-reference IPC endpoint for the Phase C connection
+// key-editor; keys currently flow via connection_add/edit mirroring into
+// SecretStore.
 #[tauri::command]
 pub fn secrets_set_key(
     state: tauri::State<'_, SecretStore>,

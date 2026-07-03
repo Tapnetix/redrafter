@@ -190,6 +190,52 @@ fn every_registered_command_has_an_acl_grant() {
     }
 }
 
+/// Strengthens `every_registered_command_has_an_acl_grant`'s one-directional
+/// check (every EXPECTED command has a grant) into a bidirectional one: the
+/// capability file's own command grants must equal `EXPECTED_COMMANDS`
+/// exactly. The one-directional check alone would still pass if a command
+/// were added to `invoke_handler!` (and even granted an ACL permission) but
+/// never added to `EXPECTED_COMMANDS` itself -- it just wouldn't be checked
+/// by either loop. Tauri gives no way to enumerate a `MockRuntime`'s
+/// registered commands directly (`invoke_handler()` is an opaque `Fn(Invoke)
+/// -> bool`), so this pins the *ACL grant set* both ways instead, per the
+/// module doc's registered/ACL pairing.
+#[test]
+fn acl_command_grants_match_expected_commands_exactly() {
+    let capabilities = include_str!("../capabilities/default.json");
+    let parsed: serde_json::Value =
+        serde_json::from_str(capabilities).expect("capabilities/default.json must be valid JSON");
+    let permissions: Vec<&str> = parsed["permissions"]
+        .as_array()
+        .expect("permissions must be an array")
+        .iter()
+        .filter_map(|p| p.as_str())
+        .collect();
+
+    // Our own commands' grants are the bare `allow-<command>` permissions
+    // (no `plugin:` prefix) -- distinct from a plugin's own default/grant
+    // like `core:default` or `global-shortcut:allow-register`, which never
+    // start with the literal `allow-` prefix.
+    let mut command_grants: Vec<String> = permissions
+        .iter()
+        .filter_map(|p| p.strip_prefix("allow-"))
+        .map(|suffix| suffix.replace('-', "_"))
+        .collect();
+    command_grants.sort();
+
+    let mut expected: Vec<String> = EXPECTED_COMMANDS.iter().map(|c| c.to_string()).collect();
+    expected.sort();
+
+    assert_eq!(
+        command_grants, expected,
+        "capabilities/default.json's `allow-*` command grants must equal \
+         EXPECTED_COMMANDS exactly in both directions -- a command added to \
+         the invoke handler (and even ACL-granted) but omitted from \
+         EXPECTED_COMMANDS would otherwise go unchecked, and a stale grant \
+         left behind for a removed command would too"
+    );
+}
+
 #[test]
 fn an_unregistered_command_name_is_rejected_as_not_found() {
     // Sanity check for `is_unregistered_rejection` itself: a command that

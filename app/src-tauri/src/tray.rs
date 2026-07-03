@@ -105,6 +105,74 @@ pub(crate) fn set_status_message<R: Runtime>(app: &tauri::AppHandle<R>, message:
     }
 }
 
+/// Which section of the active-model switcher a [`TrayModelRow`] falls in,
+/// mirroring `rebuild_tray_menu`'s two-part layout: the flat favorites list
+/// first, then every model grouped by provider (first-seen order). A
+/// favorite still gets its own row in the provider section too -- the menu
+/// lists it twice, same as before this was extracted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TraySection {
+    Favorites,
+    Provider,
+}
+
+/// A single row `rebuild_tray_menu` turns into a `CheckMenuItemBuilder` for
+/// the active-model switcher submenu, in final display order.
+#[derive(Debug, Clone, PartialEq)]
+struct TrayModelRow {
+    model: CuratedModel,
+    section: TraySection,
+}
+
+/// Pure ordering decision behind the tray's active-model switcher: favorites
+/// first (in `models` order), then every enabled model grouped by provider
+/// in first-seen order (mirrors `Tray.tsx`'s own grouping). Extracted out of
+/// `rebuild_tray_menu`'s `CheckMenuItemBuilder`/`SubmenuBuilder` glue (which
+/// needs a live GTK loop, see `setup_tray`'s doc note) so this decision is
+/// unit-testable on its own.
+fn tray_model_rows(result: &ModelsListResult) -> Vec<TrayModelRow> {
+    let mut rows = Vec::new();
+
+    for model in result.models.iter().filter(|m| m.favorite) {
+        rows.push(TrayModelRow {
+            model: model.clone(),
+            section: TraySection::Favorites,
+        });
+    }
+
+    // Providers in first-seen order (mirrors `Tray.tsx`'s own grouping), so
+    // the full per-connection list beneath favorites is stable rather than
+    // resorting on every rebuild.
+    let mut providers: Vec<&str> = Vec::new();
+    for model in &result.models {
+        if !providers.contains(&model.provider_kind.as_str()) {
+            providers.push(&model.provider_kind);
+        }
+    }
+    for provider in &providers {
+        for model in result.models.iter().filter(|m| m.provider_kind == *provider) {
+            rows.push(TrayModelRow {
+                model: model.clone(),
+                section: TraySection::Provider,
+            });
+        }
+    }
+
+    rows
+}
+
+/// The active-model switcher submenu's title suffix ("Active model: <id>",
+/// or a placeholder when nothing is active) -- pure text extracted out of
+/// `rebuild_tray_menu` so it's unit-testable.
+fn tray_active_model_label(result: &ModelsListResult) -> String {
+    result
+        .models
+        .iter()
+        .find(|m| m.active)
+        .map(|m| m.model_id.clone())
+        .unwrap_or_else(|| "No model selected".to_string())
+}
+
 fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let Some(tray) = app.tray_by_id("main") else {
         return Ok(());
@@ -130,41 +198,22 @@ fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
         .enabled(!paused)
         .build(app)?;
 
-    let active_label = result
-        .models
-        .iter()
-        .find(|m| m.active)
-        .map(|m| m.model_id.clone())
-        .unwrap_or_else(|| "No model selected".to_string());
+    let active_label = tray_active_model_label(&result);
     let mut switcher_builder = SubmenuBuilder::new(app, format!("Active model: {active_label}"));
 
-    let favorites: Vec<&CuratedModel> = result.models.iter().filter(|m| m.favorite).collect();
-    for model in &favorites {
-        let item = CheckMenuItemBuilder::with_id(model_menu_id(model), &model.model_id)
-            .checked(model.active)
+    let mut previous_section: Option<TraySection> = None;
+    for row in tray_model_rows(&result) {
+        // A separator between the favorites list and the grouped-by-provider
+        // list below it, but only once, and only when favorites came first.
+        if previous_section == Some(TraySection::Favorites) && row.section == TraySection::Provider
+        {
+            switcher_builder = switcher_builder.separator();
+        }
+        let item = CheckMenuItemBuilder::with_id(model_menu_id(&row.model), &row.model.model_id)
+            .checked(row.model.active)
             .build(app)?;
         switcher_builder = switcher_builder.item(&item);
-    }
-    if !favorites.is_empty() {
-        switcher_builder = switcher_builder.separator();
-    }
-
-    // Providers in first-seen order (mirrors `Tray.tsx`'s own grouping), so
-    // the full per-connection list beneath favorites is stable rather than
-    // resorting on every rebuild.
-    let mut providers: Vec<String> = Vec::new();
-    for model in &result.models {
-        if !providers.contains(&model.provider_kind) {
-            providers.push(model.provider_kind.clone());
-        }
-    }
-    for provider in &providers {
-        for model in result.models.iter().filter(|m| &m.provider_kind == provider) {
-            let item = CheckMenuItemBuilder::with_id(model_menu_id(model), &model.model_id)
-                .checked(model.active)
-                .build(app)?;
-            switcher_builder = switcher_builder.item(&item);
-        }
+        previous_section = Some(row.section);
     }
     let manage_models = MenuItemBuilder::with_id("manage-models", "Manage models…").build(app)?;
     switcher_builder = switcher_builder.separator().item(&manage_models);
@@ -564,6 +613,104 @@ mod tests {
         // `set_paused`/`model_set_active_impl`'s own tests, since applying
         // them here would panic building a native menu under `MockRuntime`.)
         handle_menu_event(&app.handle().clone(), "refine");
+    }
+
+    // ── tray_model_rows / tray_active_model_label (pure ordering, GTK-free) ──
+
+    fn model(connection_id: &str, model_id: &str, provider_kind: &str, active: bool, favorite: bool) -> CuratedModel {
+        CuratedModel {
+            connection_id: connection_id.to_string(),
+            model_id: model_id.to_string(),
+            provider_kind: provider_kind.to_string(),
+            active,
+            favorite,
+        }
+    }
+
+    fn models_result(models: Vec<CuratedModel>) -> ModelsListResult {
+        ModelsListResult {
+            models,
+            has_active: false,
+            active_unavailable: false,
+            stale_active_model_id: None,
+        }
+    }
+
+    #[test]
+    fn tray_model_rows_is_empty_for_no_models() {
+        assert_eq!(tray_model_rows(&models_result(Vec::new())), Vec::new());
+    }
+
+    #[test]
+    fn tray_model_rows_lists_favorites_first_then_every_model_grouped_by_provider() {
+        let result = models_result(vec![
+            model("1", "claude-opus", "anthropic", false, false),
+            model("2", "qwen3:8b", "ollama", false, true),
+            model("1", "claude-haiku", "anthropic", true, false),
+        ]);
+
+        let rows = tray_model_rows(&result);
+
+        // Favorites first (in `models` order), then every model grouped by
+        // provider in first-seen order -- so the one favorite comes first,
+        // then anthropic's two models (first-seen provider), then ollama's.
+        assert_eq!(
+            rows,
+            vec![
+                TrayModelRow {
+                    model: model("2", "qwen3:8b", "ollama", false, true),
+                    section: TraySection::Favorites,
+                },
+                TrayModelRow {
+                    model: model("1", "claude-opus", "anthropic", false, false),
+                    section: TraySection::Provider,
+                },
+                TrayModelRow {
+                    model: model("1", "claude-haiku", "anthropic", true, false),
+                    section: TraySection::Provider,
+                },
+                TrayModelRow {
+                    model: model("2", "qwen3:8b", "ollama", false, true),
+                    section: TraySection::Provider,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tray_model_rows_omits_the_favorites_section_when_there_are_none() {
+        let result = models_result(vec![model("1", "claude-opus", "anthropic", false, false)]);
+
+        let rows = tray_model_rows(&result);
+
+        assert!(rows.iter().all(|r| r.section == TraySection::Provider));
+    }
+
+    #[test]
+    fn tray_model_rows_flags_the_active_model_in_every_section_it_appears_in() {
+        let result = models_result(vec![model("1", "claude-opus", "anthropic", true, true)]);
+
+        let rows = tray_model_rows(&result);
+
+        assert!(rows.iter().all(|r| r.model.active));
+    }
+
+    #[test]
+    fn tray_active_model_label_reports_the_active_models_id() {
+        let result = models_result(vec![
+            model("1", "claude-opus", "anthropic", false, false),
+            model("1", "claude-haiku", "anthropic", true, false),
+        ]);
+
+        assert_eq!(tray_active_model_label(&result), "claude-haiku");
+    }
+
+    #[test]
+    fn tray_active_model_label_reports_a_placeholder_when_nothing_is_active() {
+        assert_eq!(
+            tray_active_model_label(&models_result(Vec::new())),
+            "No model selected"
+        );
     }
 
     // ── menu_action_for (pure routing, GTK-free) ──
