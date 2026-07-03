@@ -17,6 +17,7 @@ import {
   modelSetActive,
   modelDisable,
   modelToggleFavorite,
+  traySetActiveModel,
   ollamaPull,
   permissionOpenSettings,
   refine,
@@ -237,6 +238,16 @@ describe('ipc', () => {
     await modelToggleFavorite({ connectionId: '1', modelId: 'qwen3:8b' });
     expect(mockedInvoke).toHaveBeenCalledWith('model_toggle_favorite', {
       connectionId: '1',
+      modelId: 'qwen3:8b',
+    });
+  });
+
+  it('traySetActiveModel invokes tray_set_active_model with the connection/model ids', async () => {
+    mockedInvoke.mockResolvedValue({ models: [], hasActive: true, activeUnavailable: false, staleActiveModelId: null });
+
+    await traySetActiveModel({ connectionId: '2', modelId: 'qwen3:8b' });
+    expect(mockedInvoke).toHaveBeenCalledWith('tray_set_active_model', {
+      connectionId: '2',
       modelId: 'qwen3:8b',
     });
   });
