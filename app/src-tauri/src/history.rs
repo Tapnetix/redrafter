@@ -11,9 +11,10 @@
 // `history_copy`/`history_clear`, backing the History screen's copy and
 // clear-all controls (search and the detail view reuse the already-loaded
 // list, no new commands needed). C17 is the one that actually calls
-// `append` from `lib.rs`'s `execute_refine` (so every real refine gets
-// recorded) and registers every command here in the invoke handler/ACL —
-// until then they compile but aren't reachable from the frontend.
+// `append` (and, right after, `prune`) from `lib.rs`'s `execute_refine` (so
+// every real refine gets recorded and the store never grows past the
+// Behavior screen's configured retention cap) and registers every command
+// here in the invoke handler/ACL.
 
 use anyhow::Result;
 use rusqlite::{Connection as SqliteConnection, OptionalExtension};
@@ -29,6 +30,21 @@ use crate::connections::{provider_for, resolve_api_key, Connection, ConnectionSt
 use crate::orchestrator::{Orchestrator, SystemTextIo, TextCapture, TextInjector};
 use crate::prompt_builder::BuildOptions;
 use crate::secrets::SecretStore;
+use crate::settings::SettingsStore;
+
+/// Milliseconds in a day, for converting the Behavior screen's
+/// `history.retention_days` (whole days) into a `created_at` cutoff.
+const MILLIS_PER_DAY: i64 = 24 * 60 * 60 * 1000;
+
+/// Settings key for the max number of entries to keep (`Behavior.tsx`'s
+/// `retention-count` control, C5/C11) -- a plain numeric string (e.g.
+/// `"50"`), or the non-numeric `"Unlimited"` for "never prune by count".
+const RETENTION_COUNT_KEY: &str = "history.retention_count";
+/// Settings key for the max age (in whole days) to keep an entry
+/// (`Behavior.tsx`'s `retention-days` control, C5/C11) -- `"0"` is the
+/// screen's "session only" option (see [`prune`]'s doc comment for how a
+/// per-append prune approximates that without a dedicated app-quit hook).
+const RETENTION_DAYS_KEY: &str = "history.retention_days";
 
 /// One recorded refine: the original selection, the model's output, which
 /// model produced it, when, and (if the original carried one) the inline
@@ -172,6 +188,50 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Deletes every entry except the `keep` most recent (`None` prunes
+    /// nothing -- the "Unlimited" retention-count option keeps everything
+    /// regardless of count).
+    pub fn prune_by_count(&self, keep: Option<usize>) -> Result<()> {
+        let Some(keep) = keep else {
+            return Ok(());
+        };
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM history WHERE id NOT IN (
+                SELECT id FROM history ORDER BY id DESC LIMIT ?1
+            )",
+            [keep as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes every entry whose `created_at` is strictly before `cutoff`
+    /// (Unix epoch milliseconds). The timestamp-explicit half of
+    /// [`HistoryStore::prune_by_age`], so a test can assert pruning
+    /// deterministically instead of racing the wall clock (mirrors
+    /// `append`/`append_with_timestamp`).
+    fn prune_before(&self, cutoff: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM history WHERE created_at < ?1", [cutoff])?;
+        Ok(())
+    }
+
+    /// Deletes every entry older than `max_age_days` days, measured from
+    /// `now` (`None` prunes nothing -- an unset `history.retention_days`
+    /// keeps everything regardless of age).
+    fn prune_by_age_at(&self, max_age_days: Option<i64>, now: i64) -> Result<()> {
+        let Some(days) = max_age_days else {
+            return Ok(());
+        };
+        self.prune_before(now - days * MILLIS_PER_DAY)
+    }
+
+    /// [`HistoryStore::prune_by_age_at`] against the real wall clock --
+    /// what [`prune`] actually calls.
+    pub fn prune_by_age(&self, max_age_days: Option<i64>) -> Result<()> {
+        self.prune_by_age_at(max_age_days, now_millis())
+    }
+
     fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
         let id: i64 = row.get(0)?;
         Ok(HistoryEntry {
@@ -266,6 +326,35 @@ pub fn history_clear_impl(store: &HistoryStore) -> Result<(), String> {
 #[tauri::command]
 pub fn history_clear(state: tauri::State<'_, HistoryStore>) -> Result<(), String> {
     history_clear_impl(&state)
+}
+
+/// Prunes `store` per the Behavior screen's persisted retention settings
+/// (`history.retention_count`/`history.retention_days`, C5/C11): an unset or
+/// non-numeric `history.retention_count` (the "Unlimited" option) never
+/// prunes by count, and an unset `history.retention_days` never prunes by
+/// age. Called by `lib.rs`'s `execute_refine` right after every successful
+/// [`HistoryStore::append`], so the store never grows past the configured
+/// cap mid-session.
+///
+/// `history.retention_days = "0"` (the screen's "session only" option,
+/// which reads "history cleared on quit" in the UI copy) has no dedicated
+/// app-shutdown hook to clear on here -- pruning by a zero-day age cutoff
+/// right after every append is the closest a per-append prune gets to that:
+/// in practice, every entry from *before* the one just appended is already
+/// "older than now" and gets pruned, so the store never accumulates past
+/// the latest refine within a session either.
+pub fn prune(store: &HistoryStore, settings: &SettingsStore) -> Result<(), String> {
+    let retention_count = settings
+        .get(RETENTION_COUNT_KEY)
+        .map_err(|e| e.to_string())?
+        .and_then(|raw| raw.parse::<usize>().ok());
+    let retention_days = settings
+        .get(RETENTION_DAYS_KEY)
+        .map_err(|e| e.to_string())?
+        .and_then(|raw| raw.parse::<i64>().ok());
+
+    store.prune_by_count(retention_count).map_err(|e| e.to_string())?;
+    store.prune_by_age(retention_days).map_err(|e| e.to_string())
 }
 
 /// Restores a past entry's *original* text: looks it up and injects it back
@@ -695,6 +784,142 @@ mod tests {
         let store = new_store();
         let err = history_copy_impl(&store, "999").unwrap_err();
         assert!(err.contains("999"), "got: {err}");
+    }
+
+    // ── prune_by_count / prune_by_age (C11's retention cap, wired by C17) ──
+
+    #[test]
+    fn prune_by_count_keeps_only_the_n_most_recent_entries() {
+        let store = new_store();
+        store.append_with_timestamp("one", "one refined", "gpt-5.1", None, 100).unwrap();
+        let second = store
+            .append_with_timestamp("two", "two refined", "gpt-5.1", None, 200)
+            .unwrap();
+        let third = store
+            .append_with_timestamp("three", "three refined", "gpt-5.1", None, 300)
+            .unwrap();
+
+        store.prune_by_count(Some(2)).unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![third, second]);
+    }
+
+    #[test]
+    fn prune_by_count_none_keeps_everything() {
+        let store = new_store();
+        store.append("one", "one refined", "gpt-5.1", None).unwrap();
+        store.append("two", "two refined", "gpt-5.1", None).unwrap();
+
+        store.prune_by_count(None).unwrap();
+
+        assert_eq!(store.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn prune_by_count_is_a_no_op_when_there_are_fewer_entries_than_the_cap() {
+        let store = new_store();
+        store.append("one", "one refined", "gpt-5.1", None).unwrap();
+
+        store.prune_by_count(Some(50)).unwrap();
+
+        assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn prune_by_age_at_deletes_entries_older_than_the_cutoff() {
+        let store = new_store();
+        let one_day_old = store
+            .append_with_timestamp("stale", "stale refined", "gpt-5.1", None, 0)
+            .unwrap();
+        let fresh = store
+            .append_with_timestamp("fresh", "fresh refined", "gpt-5.1", None, 2 * MILLIS_PER_DAY)
+            .unwrap();
+
+        // "now" is exactly 2 days after the epoch used above; a 1-day
+        // retention window prunes the entry created at t=0 but keeps the
+        // one created at t=2 days.
+        store.prune_by_age_at(Some(1), 2 * MILLIS_PER_DAY).unwrap();
+
+        let remaining = store.list().unwrap();
+        assert_eq!(remaining, vec![fresh]);
+        assert!(!remaining.contains(&one_day_old));
+    }
+
+    #[test]
+    fn prune_by_age_at_none_keeps_everything_regardless_of_age() {
+        let store = new_store();
+        store
+            .append_with_timestamp("ancient", "ancient refined", "gpt-5.1", None, 0)
+            .unwrap();
+
+        store.prune_by_age_at(None, 100 * MILLIS_PER_DAY).unwrap();
+
+        assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    // ── prune (reads the Behavior screen's retention settings) ──
+
+    fn new_settings() -> SettingsStore {
+        SettingsStore::open_in_memory().expect("failed to open in-memory settings")
+    }
+
+    #[test]
+    fn prune_with_no_settings_configured_keeps_everything() {
+        let store = new_store();
+        let settings = new_settings();
+        store.append("one", "one refined", "gpt-5.1", None).unwrap();
+        store.append("two", "two refined", "gpt-5.1", None).unwrap();
+
+        prune(&store, &settings).unwrap();
+
+        assert_eq!(store.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn prune_applies_the_configured_retention_count() {
+        let store = new_store();
+        let settings = new_settings();
+        settings.set(RETENTION_COUNT_KEY, "1").unwrap();
+        store
+            .append_with_timestamp("one", "one refined", "gpt-5.1", None, 100)
+            .unwrap();
+        let second = store
+            .append_with_timestamp("two", "two refined", "gpt-5.1", None, 200)
+            .unwrap();
+
+        prune(&store, &settings).unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![second]);
+    }
+
+    #[test]
+    fn prune_treats_unlimited_as_no_count_cap() {
+        let store = new_store();
+        let settings = new_settings();
+        settings.set(RETENTION_COUNT_KEY, "Unlimited").unwrap();
+        store.append("one", "one refined", "gpt-5.1", None).unwrap();
+        store.append("two", "two refined", "gpt-5.1", None).unwrap();
+
+        prune(&store, &settings).unwrap();
+
+        assert_eq!(store.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn prune_applies_the_configured_retention_days() {
+        let store = new_store();
+        let settings = new_settings();
+        settings.set(RETENTION_DAYS_KEY, "1").unwrap();
+        store
+            .append_with_timestamp("stale", "stale refined", "gpt-5.1", None, 0)
+            .unwrap();
+        let fresh = store
+            .append_with_timestamp("fresh", "fresh refined", "gpt-5.1", None, now_millis())
+            .unwrap();
+
+        prune(&store, &settings).unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![fresh]);
     }
 
     // ── resolve_connection_for_model ──

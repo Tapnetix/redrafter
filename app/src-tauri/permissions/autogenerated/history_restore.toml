@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-history-restore"
+description = "Enables the history_restore command without any pre-configured scope."
+commands.allow = ["history_restore"]
+
+[[permission]]
+identifier = "deny-history-restore"
+description = "Denies the history_restore command without any pre-configured scope."
+commands.deny = ["history_restore"]

@@ -31,12 +31,14 @@
 
 pub mod command_parser;
 pub mod connections;
+pub mod feedback;
 pub mod history;
 pub mod hotkey;
 pub mod lifecycle;
 pub mod models;
 pub mod orchestrator;
 pub mod permission;
+pub mod presets;
 pub mod prompt_builder;
 pub mod quote_parser;
 pub mod secrets;
@@ -54,6 +56,11 @@ use connections::{
     connection_add, connection_edit, connection_list, connection_refresh_models,
     connection_remove, connection_test, model_add_manual, resolve_api_key, ConnectionStore,
 };
+use feedback::{feedback_config_get, feedback_config_set, FeedbackCue};
+use history::{
+    history_clear, history_copy, history_get, history_list, history_restore, history_rerefine,
+    HistoryStore,
+};
 use hotkey::{hotkey_set, HotkeyState};
 use lifecycle::{tray_check_updates, tray_set_launch_login};
 use models::{
@@ -64,6 +71,10 @@ use orchestrator::{
     TextInjector,
 };
 use permission::{permission_open_settings, permission_status, AccessibilityChecker};
+use presets::{
+    preset_delete, preset_duplicate, preset_export, preset_import, preset_list,
+    preset_reset_default, preset_resolve, preset_save, PresetStore,
+};
 use prompt_builder::{BuildOptions, QuoteMode};
 use secrets::{secrets_delete, secrets_set, secrets_set_key, SecretStore};
 use settings::{settings_get, settings_set, SettingsStore};
@@ -294,20 +305,50 @@ fn permission_gate<C: AccessibilityChecker>(checker: &C) -> Result<(), String> {
     Ok(())
 }
 
+/// Derives a completed refine's `HistoryEntry::command` field (C17) from its
+/// original selection: the resolved preset trigger if the selection started
+/// with one (`/formal` -> `"/formal"`), else `"/rd"` if it carried an
+/// explicit direction override, else `None` for a plain untagged selection.
+/// Cheap, pure re-parse of `original` via `command_parser::parse` -- the
+/// same parse `orchestrator::resolve_prompt` already ran deep inside the
+/// pipeline, whose result isn't threaded back out through `RefineOutcome`;
+/// redoing it here (no I/O, no side effects) is simpler than plumbing that
+/// value all the way back.
+fn history_command_trigger(original: &str) -> Option<String> {
+    let parsed = command_parser::parse(original);
+    parsed
+        .preset
+        .map(|trigger| format!("/{trigger}"))
+        .or_else(|| parsed.direction.as_ref().map(|_| "/rd".to_string()))
+}
+
 /// Runs the refine pipeline against an already-selected `model`/`provider`
 /// and a given capture/inject seam, recording the result in `refine_state`
 /// (including, for a review-mode result, `refine_state.pending_review` --
 /// B23's reconciliation of B5's review branch, see the module docs).
 ///
+/// C17 wires two more effects into every *successful* call: a completed
+/// refine (`Injected` or `PendingReview` -- either way, the model call
+/// itself succeeded) is appended to `history` (with its preset/`/rd`
+/// trigger, if any -- see [`history_command_trigger`]) and the store is
+/// then pruned to the Behavior screen's configured retention cap
+/// (`history::prune`). Both are best-effort: a failure to record/prune
+/// history is logged, not propagated -- the refine itself already
+/// succeeded (and, in blind mode, already injected), so a history-write
+/// failure shouldn't be reported as the whole refine having failed.
+///
 /// Generic over `TextCapture`/`TextInjector` (mirrors `Orchestrator`'s own
 /// genericity) and takes the provider directly rather than looking it up
 /// itself, so the whole post-permission-check pipeline — settings read,
-/// orchestrator run, restore-buffer/pending-review bookkeeping — is
-/// unit-testable with fakes (`orchestrator`'s `FakeProvider`/`FakeCapture`/
-/// `FakeInjector`) instead of a live network call.
+/// orchestrator run, restore-buffer/pending-review bookkeeping, history
+/// recording — is unit-testable with fakes (`orchestrator`'s
+/// `FakeProvider`/`FakeCapture`/`FakeInjector`) instead of a live network
+/// call.
 pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
     refine_state: &RefineState,
     settings: &SettingsStore,
+    presets: &PresetStore,
+    history: &HistoryStore,
     model: String,
     provider: Arc<dyn llm_provider::LlmProvider>,
     fallbacks: Vec<FallbackTarget>,
@@ -331,16 +372,29 @@ pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
 
     let orch = Orchestrator::new(capture, injector, provider);
     let flow = orch
-        .refine_with(&opts, &fallbacks, mode, cancel)
+        .refine_with(&opts, &fallbacks, mode, Some(presets), cancel)
         .await
         .map_err(|e| e.to_string())?;
 
     let outcome = flow.clone().into_outcome();
     *refine_state.restore_buffer.lock().unwrap() = Some(outcome.original.clone());
     *refine_state.pending_review.lock().unwrap() = match &flow {
-        RefineFlow::PendingReview(_) => Some(outcome),
+        RefineFlow::PendingReview(_) => Some(outcome.clone()),
         RefineFlow::Injected(_) => None,
     };
+
+    let command = history_command_trigger(&outcome.original);
+    if let Err(e) = history.append(
+        &outcome.original,
+        &outcome.refined,
+        &outcome.model,
+        command.as_deref(),
+    ) {
+        eprintln!("[history] failed to record the completed refine: {e}");
+    } else if let Err(e) = history::prune(history, settings) {
+        eprintln!("[history] failed to prune to the configured retention cap: {e}");
+    }
+
     Ok(flow)
 }
 
@@ -363,6 +417,8 @@ async fn run_refine_with(
     settings: &SettingsStore,
     connections: &ConnectionStore,
     secrets: &SecretStore,
+    presets: &PresetStore,
+    history: &HistoryStore,
     refine_state: &RefineState,
 ) -> Result<RefineFlow, String> {
     run_refine_with_checker(
@@ -370,6 +426,8 @@ async fn run_refine_with(
         settings,
         connections,
         secrets,
+        presets,
+        history,
         refine_state,
     )
     .await
@@ -389,6 +447,8 @@ async fn run_refine_with_checker<C: AccessibilityChecker>(
     settings: &SettingsStore,
     connections: &ConnectionStore,
     secrets: &SecretStore,
+    presets: &PresetStore,
+    history: &HistoryStore,
     refine_state: &RefineState,
 ) -> Result<RefineFlow, String> {
     if is_paused(settings) {
@@ -403,6 +463,8 @@ async fn run_refine_with_checker<C: AccessibilityChecker>(
     execute_refine(
         refine_state,
         settings,
+        presets,
+        history,
         model,
         provider,
         fallbacks,
@@ -412,20 +474,72 @@ async fn run_refine_with_checker<C: AccessibilityChecker>(
     .await
 }
 
-/// Thin `AppHandle` wrapper around [`run_refine_with`], pulling the four
+/// Tauri event name `run_refine` emits right before the pipeline attempts a
+/// refine (a `Vec<`[`FeedbackCue`]`>` payload — whichever spinner/HUD cues
+/// the Behavior screen's feedback settings currently have enabled,
+/// `feedback::on_refine_start`). The frontend spinner/HUD (a later phase,
+/// per C1/C5's own module docs) listen for this to show themselves.
+pub const REFINE_FEEDBACK_START_EVENT: &str = "refine-feedback-start";
+/// Tauri event name `run_refine` emits right after the pipeline finishes
+/// (`Ok` or `Err` either way — a spinner/HUD must never get stuck showing
+/// because the attempt happened to fail), carrying whichever cues
+/// `feedback::on_refine_done` reports (spinner/HUD clearing, plus the
+/// completion sound if enabled).
+pub const REFINE_FEEDBACK_DONE_EVENT: &str = "refine-feedback-done";
+
+/// Emits `event` with `cues` as its payload via the real Tauri event bus.
+/// Best-effort (a failed emit -- e.g. an invalid event name -- never fails
+/// the refine itself, matching [`execute_refine`]'s own history-recording
+/// error handling).
+fn emit_feedback_cues<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    event: &str,
+    cues: Vec<FeedbackCue>,
+) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit(event, cues) {
+        eprintln!("[feedback] failed to emit {event}: {e}");
+    }
+}
+
+/// Thin `AppHandle` wrapper around [`run_refine_with`], pulling the six
 /// managed stores out of Tauri state. This is the one piece that genuinely
 /// needs a running app/handle; the actual gate-and-pipeline logic it
 /// delegates to is unit-tested directly (see `run_refine_with`'s tests).
+///
+/// C17 also brackets the call with the feedback cue events
+/// ([`REFINE_FEEDBACK_START_EVENT`]/[`REFINE_FEEDBACK_DONE_EVENT`]) --
+/// this AppHandle-level wrapper (rather than `run_refine_with`/
+/// `execute_refine`) is where that happens, since emitting a real Tauri
+/// event needs the handle those lower layers are deliberately kept free of
+/// (so they stay unit-testable without a running app, mirroring
+/// `execute_refine`'s own doc note). The done cues fire regardless of
+/// whether the pipeline ultimately succeeds -- see
+/// [`REFINE_FEEDBACK_DONE_EVENT`]'s doc comment.
 pub(crate) async fn run_refine<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<RefineFlow, String> {
-    run_refine_with(
-        &app.state::<SettingsStore>(),
+    let settings = app.state::<SettingsStore>();
+
+    if let Ok(cues) = feedback::on_refine_start(&settings) {
+        emit_feedback_cues(app, REFINE_FEEDBACK_START_EVENT, cues);
+    }
+
+    let result = run_refine_with(
+        &settings,
         &app.state::<ConnectionStore>(),
         &app.state::<SecretStore>(),
+        &app.state::<PresetStore>(),
+        &app.state::<HistoryStore>(),
         &app.state::<RefineState>(),
     )
-    .await
+    .await;
+
+    if let Ok(cues) = feedback::on_refine_done(&settings) {
+        emit_feedback_cues(app, REFINE_FEEDBACK_DONE_EVENT, cues);
+    }
+
+    result
 }
 
 /// Tauri command: runs the default refine pipeline (capture -> prompt ->
@@ -621,14 +735,39 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         tray_resume,
         tray_check_updates,
         tray_set_launch_login,
+        // Phase C presets (C3/C3b/C8/C9/C10, resolution wired by C17)
+        preset_list,
+        preset_save,
+        preset_delete,
+        preset_duplicate,
+        preset_reset_default,
+        preset_export,
+        preset_import,
+        preset_resolve,
+        // Phase C history (C4/C12-C15)
+        history_list,
+        history_get,
+        history_restore,
+        history_rerefine,
+        history_copy,
+        history_clear,
+        // Phase C feedback (C1/C5)
+        feedback_config_get,
+        feedback_config_set,
     ]
 }
 
-/// Opens (creating on first run) the settings/connections/secrets stores
-/// under the app's data directory.
+/// Opens (creating on first run) the settings/connections/secrets/presets/
+/// history stores under the app's data directory.
 fn open_stores<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-) -> anyhow::Result<(SettingsStore, ConnectionStore, SecretStore)> {
+) -> anyhow::Result<(
+    SettingsStore,
+    ConnectionStore,
+    SecretStore,
+    PresetStore,
+    HistoryStore,
+)> {
     let app_data = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_data)?;
     let settings = SettingsStore::open(&app_data.join("settings.sqlite3"))?;
@@ -638,7 +777,9 @@ fn open_stores<R: tauri::Runtime>(
     // B10/B23) immediately -- otherwise every restart would silently reset
     // to the encrypted-file default until the user re-toggled the picker.
     secrets.set_storage_backend(secrets::storage_backend_from_settings(&settings));
-    Ok((settings, connections, secrets))
+    let presets = PresetStore::open(&app_data.join("presets.sqlite3"))?;
+    let history = HistoryStore::open(&app_data.join("history.sqlite3"))?;
+    Ok((settings, connections, secrets, presets, history))
 }
 
 /// The Tauri app's entry point, called by `main.rs`.
@@ -661,11 +802,14 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            let (settings, connections, secrets) = open_stores(&handle)
-                .map_err(|e| format!("failed to open settings/connections/secrets stores: {e}"))?;
+            let (settings, connections, secrets, presets, history) = open_stores(&handle).map_err(|e| {
+                format!("failed to open settings/connections/secrets/presets/history stores: {e}")
+            })?;
             app.manage(settings);
             app.manage(connections);
             app.manage(secrets);
+            app.manage(presets);
+            app.manage(history);
             app.manage(HotkeyState::default());
             app.manage(RefineState::default());
 
@@ -706,6 +850,14 @@ mod tests {
 
     fn new_settings() -> SettingsStore {
         SettingsStore::open_in_memory().expect("failed to open in-memory settings")
+    }
+
+    fn new_presets() -> PresetStore {
+        PresetStore::open_in_memory().expect("failed to open in-memory presets")
+    }
+
+    fn new_history() -> HistoryStore {
+        HistoryStore::open_in_memory().expect("failed to open in-memory history")
     }
 
     /// Minimal RAII temp-dir guard for a `SecretStore` in tests (mirrors
@@ -1029,11 +1181,15 @@ mod tests {
     async fn execute_refine_runs_the_pipeline_and_fills_the_restore_buffer() {
         let refine_state = RefineState::default();
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
+        let presets = new_presets();
+        let history = new_history();
         let injector = FakeInjector::default();
 
         let flow = execute_refine(
             &refine_state,
             &settings,
+            &presets,
+            &history,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
             Vec::new(),
@@ -1055,6 +1211,12 @@ mod tests {
         );
         // Blind mode never leaves a pending review behind.
         assert_eq!(refine_state.pending_review.lock().unwrap().clone(), None);
+        // C17: a successful refine is recorded to history.
+        assert_eq!(history.list().unwrap().len(), 1);
+        let recorded = &history.list().unwrap()[0];
+        assert_eq!(recorded.original, "original text");
+        assert_eq!(recorded.refined, "refined text");
+        assert_eq!(recorded.command, None, "an untagged selection has no trigger");
     }
 
     /// Boundary test for the B5/B23 reconciliation: a review-mode refine
@@ -1068,11 +1230,15 @@ mod tests {
         let refine_state = RefineState::default();
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
         settings.set(INJECT_MODE_KEY, "review").unwrap();
+        let presets = new_presets();
+        let history = new_history();
         let injector = FakeInjector::default();
 
         let flow = execute_refine(
             &refine_state,
             &settings,
+            &presets,
+            &history,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
             Vec::new(),
@@ -1099,11 +1265,15 @@ mod tests {
         let refine_state = RefineState::default();
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
         settings.set(INJECT_MODE_KEY, "review").unwrap();
+        let presets = new_presets();
+        let history = new_history();
         let injector = FakeInjector::default();
 
         execute_refine(
             &refine_state,
             &settings,
+            &presets,
+            &history,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
             Vec::new(),
@@ -1135,11 +1305,15 @@ mod tests {
         let refine_state = RefineState::default();
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
         settings.set(INJECT_MODE_KEY, "review").unwrap();
+        let presets = new_presets();
+        let history = new_history();
         let refine_injector = FakeInjector::default();
 
         execute_refine(
             &refine_state,
             &settings,
+            &presets,
+            &history,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
             Vec::new(),
@@ -1198,6 +1372,8 @@ mod tests {
     async fn execute_refine_forwards_the_fallback_chain_to_the_orchestrator() {
         let refine_state = RefineState::default();
         let settings = new_settings();
+        let presets = new_presets();
+        let history = new_history();
         let injector = FakeInjector::default();
 
         let fallbacks = vec![FallbackTarget::new(
@@ -1208,6 +1384,8 @@ mod tests {
         let flow = execute_refine(
             &refine_state,
             &settings,
+            &presets,
+            &history,
             "primary-model".to_string(),
             Arc::new(FailingProvider),
             fallbacks,
@@ -1374,12 +1552,35 @@ mod tests {
         assert!(!is_paused(&settings));
     }
 
+    // ---- history_command_trigger ----
+
+    #[test]
+    fn history_command_trigger_is_none_for_a_plain_untagged_selection() {
+        assert_eq!(history_command_trigger("just a plain draft"), None);
+    }
+
+    #[test]
+    fn history_command_trigger_reports_a_preset_trigger() {
+        assert_eq!(
+            history_command_trigger("/formal please tidy this up"),
+            Some("/formal".to_string())
+        );
+    }
+
+    #[test]
+    fn history_command_trigger_reports_rd_when_theres_no_preset_trigger() {
+        assert_eq!(
+            history_command_trigger("/rd make it more formal"),
+            Some("/rd".to_string())
+        );
+    }
+
     // ---- run_refine_with (the pipeline `dispatch_hotkey`/`refine`/
     // `tray_refine` all funnel through) ----
     //
     // Exercised directly against in-memory stores -- no `tauri::App` needed
     // (`run_refine`, the `AppHandle`-unwrapping wrapper around this, is
-    // covered transitively: it does nothing but pull these same four stores
+    // covered transitively: it does nothing but pull these same six stores
     // out of Tauri state).
 
     #[tokio::test]
@@ -1387,6 +1588,8 @@ mod tests {
         let settings = new_settings();
         let connections = new_connections();
         let (secrets, _dir) = new_secrets("run-refine-no-model");
+        let presets = new_presets();
+        let history = new_history();
         let refine_state = RefineState::default();
 
         // Drives `run_refine_with`'s actual body (`run_refine_with_checker`)
@@ -1404,6 +1607,8 @@ mod tests {
             &settings,
             &connections,
             &secrets,
+            &presets,
+            &history,
             &refine_state,
         )
         .await;
@@ -1423,12 +1628,90 @@ mod tests {
         set_paused(&settings, true).unwrap();
         let connections = new_connections();
         let (secrets, _dir) = new_secrets("run-refine-paused");
+        let presets = new_presets();
+        let history = new_history();
         let refine_state = RefineState::default();
 
         let result =
-            run_refine_with(&settings, &connections, &secrets, &refine_state).await;
+            run_refine_with(&settings, &connections, &secrets, &presets, &history, &refine_state)
+                .await;
 
         assert_eq!(result, Err(PAUSED_ERROR.to_string()));
+    }
+
+    /// Boundary test (C17): a successful refine through the full
+    /// `execute_refine` pipeline both records a `HistoryEntry` and applies
+    /// the configured retention cap -- exercised here at the same
+    /// `execute_refine` layer as the other pipeline boundary tests above
+    /// (rather than through `run_refine`/an `AppHandle`), since retention
+    /// is a pure function of the stores `execute_refine` already takes.
+    #[tokio::test]
+    async fn execute_refine_prunes_history_to_the_configured_retention_count() {
+        let refine_state = RefineState::default();
+        let settings = new_settings();
+        settings.set("history.retention_count", "1").unwrap();
+        let presets = new_presets();
+        let history = new_history();
+        let injector = FakeInjector::default();
+
+        // A refine from an earlier "session" already on record.
+        history
+            .append("earlier original", "earlier refined", "gpt-5.1", None)
+            .unwrap();
+
+        execute_refine(
+            &refine_state,
+            &settings,
+            &presets,
+            &history,
+            "fake-model".to_string(),
+            Arc::new(FakeProvider("refined text".to_string())),
+            Vec::new(),
+            FakeCapture("original text".to_string()),
+            injector.clone(),
+        )
+        .await
+        .expect("execute_refine should succeed");
+
+        // Retention count of 1 keeps only the just-recorded entry.
+        let remaining = history.list().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].original, "original text");
+    }
+
+    /// Boundary test (C17): an inline preset trigger present in the
+    /// captured selection is recorded as the history entry's `command`,
+    /// via `execute_refine`'s real pipeline (not just `history_command_trigger`
+    /// in isolation).
+    #[tokio::test]
+    async fn execute_refine_records_the_preset_trigger_as_the_historys_command() {
+        let refine_state = RefineState::default();
+        let settings = new_settings();
+        let presets = new_presets();
+        presets
+            .save("standup", "Yesterday / Today / Blockers.", None, None, None, &[])
+            .unwrap();
+        let history = new_history();
+        let injector = FakeInjector::default();
+
+        execute_refine(
+            &refine_state,
+            &settings,
+            &presets,
+            &history,
+            "fake-model".to_string(),
+            Arc::new(FakeProvider("refined text".to_string())),
+            Vec::new(),
+            FakeCapture("/standup shipped the api".to_string()),
+            injector.clone(),
+        )
+        .await
+        .expect("execute_refine should succeed");
+
+        assert_eq!(
+            history.list().unwrap()[0].command,
+            Some("/standup".to_string())
+        );
     }
 
     // ---- should_dispatch_hotkey (dispatch_hotkey's routing decision) ----
@@ -1490,5 +1773,81 @@ mod tests {
         };
 
         assert!(should_dispatch_hotkey(&hotkey_state, &shortcut, &event));
+    }
+
+    // ---- run_refine's feedback cue events (C17) ----
+    //
+    // `run_refine` is the one AppHandle-level layer that actually emits the
+    // real Tauri events (`REFINE_FEEDBACK_START_EVENT`/`REFINE_FEEDBACK_DONE_EVENT`,
+    // see its own doc comment) -- so unlike every other pipeline test above
+    // (which drive `run_refine_with`/`execute_refine` directly, no app
+    // needed), this one needs a `MockRuntime` app to listen on. Built via
+    // `tauri::test::mock_context(tauri::test::noop_assets())` (a bare,
+    // no-window/no-tray dummy config) rather than `tauri::generate_context!()`
+    // -- mirrors `tray.rs`'s own `managed_app` helper, for the same reason
+    // (a real `trayIcon` config needs the main thread to attach, which a
+    // test harness running off it can't provide).
+
+    fn feedback_test_app() -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("failed to build mock app");
+        app.manage(new_settings());
+        app.manage(new_connections());
+        app.manage(
+            SecretStore::open(&std::env::temp_dir().join(format!(
+                "redrafter_lib_feedback_secrets_{}_{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            )))
+            .expect("failed to open secret store"),
+        );
+        app.manage(new_presets());
+        app.manage(new_history());
+        app.manage(RefineState::default());
+        app
+    }
+
+    /// Boundary test: `run_refine` emits both feedback cue events around the
+    /// pipeline, with the cues the (default) feedback settings enable --
+    /// regardless of whether the pipeline itself ultimately succeeds (here
+    /// it rejects with `NO_ACTIVE_MODEL_ERROR`, no connection configured,
+    /// same as `run_refine_with_rejects_with_no_active_model_error_when_nothing_is_configured`
+    /// above) -- proving the done cues (and the spinner/HUD clear they
+    /// represent) fire even on failure, not just the happy path.
+    #[tokio::test]
+    async fn run_refine_emits_feedback_cue_events_around_the_pipeline() {
+        use tauri::Listener;
+
+        let app = feedback_test_app();
+        let handle = app.handle().clone();
+
+        let started: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let done: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let started_sink = started.clone();
+        handle.listen(REFINE_FEEDBACK_START_EVENT, move |event| {
+            started_sink
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(event.payload()).unwrap());
+        });
+        let done_sink = done.clone();
+        handle.listen(REFINE_FEEDBACK_DONE_EVENT, move |event| {
+            done_sink
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(event.payload()).unwrap());
+        });
+
+        let result = run_refine(&handle).await;
+
+        assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
+        // Default settings: spinner on, HUD off, sound on.
+        assert_eq!(started.lock().unwrap().as_slice(), &[serde_json::json!(["spinner"])]);
+        assert_eq!(
+            done.lock().unwrap().as_slice(),
+            &[serde_json::json!(["spinner", "sound"])]
+        );
     }
 }

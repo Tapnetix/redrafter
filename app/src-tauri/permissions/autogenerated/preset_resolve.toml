@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preset-resolve"
+description = "Enables the preset_resolve command without any pre-configured scope."
+commands.allow = ["preset_resolve"]
+
+[[permission]]
+identifier = "deny-preset-resolve"
+description = "Denies the preset_resolve command without any pre-configured scope."
+commands.deny = ["preset_resolve"]

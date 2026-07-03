@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preset-import"
+description = "Enables the preset_import command without any pre-configured scope."
+commands.allow = ["preset_import"]
+
+[[permission]]
+identifier = "deny-preset-import"
+description = "Denies the preset_import command without any pre-configured scope."
+commands.deny = ["preset_import"]

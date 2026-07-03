@@ -39,6 +39,22 @@
     "allow-tray-pause",
     "allow-tray-resume",
     "allow-tray-check-updates",
-    "allow-tray-set-launch-login"
+    "allow-tray-set-launch-login",
+    "allow-preset-list",
+    "allow-preset-save",
+    "allow-preset-delete",
+    "allow-preset-duplicate",
+    "allow-preset-reset-default",
+    "allow-preset-export",
+    "allow-preset-import",
+    "allow-preset-resolve",
+    "allow-history-list",
+    "allow-history-get",
+    "allow-history-restore",
+    "allow-history-rerefine",
+    "allow-history-copy",
+    "allow-history-clear",
+    "allow-feedback-config-get",
+    "allow-feedback-config-set"
   ]
 }

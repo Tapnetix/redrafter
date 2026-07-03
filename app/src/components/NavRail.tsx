@@ -7,22 +7,22 @@
 // an <a href>. The theme-toggle flips light/dark and persists it via theme.ts
 // (settings_set 'theme'), matching the wireframe's rail toggle behavior.
 //
-// The Models/Presets/History sections don't have Phase A screens yet (Phase
-// B/C); their rail buttons still render (the rail is the whole app's chrome)
-// and navigate — App.tsx shows a "coming soon" placeholder for those until
-// their screens land, so the rail never has dead buttons.
+// The section *list* (order, id, label) is derived from the shared
+// `screens-index` registry (C17) so the rail can never drift from the
+// switcher's own list; only the icons — inherently JSX markup, which the
+// plain-`.ts` registry can't hold — live here, keyed by the same ids. A new
+// section added to `screens-index` with no icon here renders a blank rail
+// button, caught by this file's own "a button for every navigable section"
+// test.
 
 import type { ReactNode } from 'react';
 import { loadTheme, setTheme, toggledTheme, type Theme } from '@/lib/theme';
+import { SCREENS, type Section } from '@/lib/screens-index';
 
-/** The sections reachable from the rail. */
-export type Section =
-  | 'general'
-  | 'connections'
-  | 'models'
-  | 'behavior'
-  | 'presets'
-  | 'history';
+// Re-exported so the many `import { type Section } from '@/components/NavRail'`
+// call sites (Sidebar, and prior to C17 App.tsx) keep working -- the canonical
+// definition now lives in `screens-index`.
+export type { Section };
 
 interface RailItem {
   id: Section;
@@ -30,60 +30,45 @@ interface RailItem {
   icon: ReactNode;
 }
 
-// Icons lifted verbatim from docs/wireframes/index.html's rail so the shell
-// matches the wireframe 1:1.
-export const RAIL_ITEMS: RailItem[] = [
-  {
-    id: 'general',
-    label: 'General',
-    icon: (
-      <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
-    ),
-  },
-  {
-    id: 'connections',
-    label: 'Connections',
-    icon: <path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6" />,
-  },
-  {
-    id: 'models',
-    label: 'Models',
-    icon: (
-      <>
-        <rect x="6" y="6" width="12" height="12" rx="2" />
-        <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
-      </>
-    ),
-  },
-  {
-    id: 'behavior',
-    label: 'Behavior',
-    icon: (
-      <path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z" />
-    ),
-  },
-  {
-    id: 'presets',
-    label: 'Presets',
-    icon: (
-      <>
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M7 9l3 3-3 3M13 15h4" />
-      </>
-    ),
-  },
-  {
-    id: 'history',
-    label: 'History',
-    icon: (
-      <>
-        <path d="M3 3v5h5" />
-        <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
-        <path d="M12 7v5l4 2" />
-      </>
-    ),
-  },
-];
+// Rail icons lifted verbatim from docs/wireframes/index.html's rail so the
+// shell matches the wireframe 1:1, keyed by section id.
+const RAIL_ICONS: Record<Section, ReactNode> = {
+  general: (
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
+  ),
+  connections: <path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 15v6" />,
+  models: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+    </>
+  ),
+  behavior: (
+    <path d="m3 21 9-9M14 4l1.5 1.5M18 3l.7.7M20 8l-6 6M12 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z" />
+  ),
+  presets: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9l3 3-3 3M13 15h4" />
+    </>
+  ),
+  history: (
+    <>
+      <path d="M3 3v5h5" />
+      <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+      <path d="M12 7v5l4 2" />
+    </>
+  ),
+};
+
+/** The rail's nav items, derived from the shared `screens-index` registry
+ * (order + id + label) plus this file's own icon markup. Exported so
+ * `Sidebar` and the rail/sidebar tests iterate the same one list. */
+export const RAIL_ITEMS: RailItem[] = SCREENS.map((screen) => ({
+  id: screen.id,
+  label: screen.title,
+  icon: RAIL_ICONS[screen.id],
+}));
 
 /** Wraps an icon's inner `<path>`/`<rect>` markup in the rail's standard
  * `<svg>` shell. Exported so `Sidebar` can reuse `RAIL_ITEMS`' icons without

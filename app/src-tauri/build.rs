@@ -8,7 +8,8 @@
 // `capabilities/default.json`'s `permissions` — the wire-up gate
 // (`tests/wireup_test.rs`) asserts every registered command is actually
 // granted, since a registered-but-ungranted command is silently denied at
-// runtime. B23 adds the Phase B commands below A14's Phase A set.
+// runtime. B23 adds the Phase B commands below A14's Phase A set; C17 adds
+// the Phase C commands (presets/history/feedback) below that.
 const COMMANDS: &[&str] = &[
     // Phase A (A14)
     "settings_get",
@@ -46,6 +47,25 @@ const COMMANDS: &[&str] = &[
     "tray_resume",
     "tray_check_updates",
     "tray_set_launch_login",
+    // Phase C presets (C3/C3b/C8/C9/C10, resolution wired by C17)
+    "preset_list",
+    "preset_save",
+    "preset_delete",
+    "preset_duplicate",
+    "preset_reset_default",
+    "preset_export",
+    "preset_import",
+    "preset_resolve",
+    // Phase C history (C4/C12-C15)
+    "history_list",
+    "history_get",
+    "history_restore",
+    "history_rerefine",
+    "history_copy",
+    "history_clear",
+    // Phase C feedback (C1/C5)
+    "feedback_config_get",
+    "feedback_config_set",
 ];
 
 fn main() {
