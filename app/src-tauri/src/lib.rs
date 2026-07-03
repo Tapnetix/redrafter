@@ -676,9 +676,12 @@ fn clear_pending_review(refine_state: &RefineState) {
 /// (mirrors `execute_refine`'s own genericity) so the inject-then-clear
 /// sequence is unit-testable with a fake injector on any platform:
 /// `inject_text_impl` always injects through the real `text-inject` crate,
-/// which only implements injection on macOS -- there it drives the real
-/// Accessibility API, which fails headlessly (no focused UI element) before
-/// ever reaching the clear a test might want to assert.
+/// which implements real injection on macOS (Accessibility API), Linux
+/// (X11/Wayland clipboard + XTEST/ydotool, see D1), and Windows (UI
+/// Automation/SendInput, see D2). On a real desktop session it drives the
+/// live OS API; on a headless host with no display/clipboard tools
+/// reachable (like this dev sandbox) it fails with a real backend error
+/// before ever reaching the clear a test might want to assert.
 fn inject_text_with<I: TextInjector>(
     injector: &I,
     refine_state: &RefineState,
@@ -1124,12 +1127,25 @@ mod tests {
 
     #[test]
     #[cfg(not(target_os = "macos"))]
-    fn inject_text_reports_the_platform_unsupported_error() {
-        // `text-inject` only implements real injection on macOS; off macOS
-        // this exercises `inject_text`'s error-mapping without touching any
-        // real OS API.
+    fn inject_text_via_the_real_backend_errors_headlessly_not_as_unsupported() {
+        // text-inject now implements real injection on macOS, Linux (D1),
+        // and Windows (D2) -- there is no "unsupported platform" stub for
+        // these three anymore. This host is a headless CI sandbox with no
+        // live display/clipboard session, so the *real* Linux/Windows
+        // backend still errors here, but for a real reason (AX/clipboard
+        // unreachable), not because the platform lacks an implementation.
+        // Exercises `inject_text`'s error-mapping without asserting on the
+        // exact backend failure text (which depends on what's installed).
         let state = RefineState::default();
-        assert!(inject_text_impl(&state, "hello").is_err());
+        let err = inject_text_impl(&state, "hello").expect_err(
+            "the real backend should fail on this headless host (no display/clipboard session), \
+             not silently succeed",
+        );
+        assert!(
+            !err.contains("Platform unsupported"),
+            "off-macOS injection is implemented (D1/D2); a headless-host failure must not be \
+             mistaken for the removed 'unsupported platform' stub, got: {err}"
+        );
     }
 
     #[test]
@@ -1320,12 +1336,14 @@ mod tests {
     /// Accept/Edit-accept) both injects the chosen text *and* clears the
     /// pending review. Exercised through a FAKE injector (`inject_text_with`)
     /// rather than the real `inject_text_impl`/`text-inject` crate: the real
-    /// one only implements injection on macOS, where it drives the actual
-    /// Accessibility API and fails headlessly (no focused UI element) before
-    /// ever reaching the clear this test asserts -- see
-    /// `inject_text_reports_the_platform_unsupported_error` for that
-    /// off-macOS error-mapping case, and `clear_pending_review_clears_a_populated_slot`
-    /// for the plain clear. This one is deterministic on every platform.
+    /// one drives the actual OS backend (Accessibility API on macOS,
+    /// X11/Wayland or UIA/SendInput off macOS, see D1/D2) and fails
+    /// headlessly on this dev host (no focused UI element / no display
+    /// session) before ever reaching the clear this test asserts -- see
+    /// `inject_text_via_the_real_backend_errors_headlessly_not_as_unsupported`
+    /// for that off-macOS headless-failure case, and
+    /// `clear_pending_review_clears_a_populated_slot` for the plain clear.
+    /// This one is deterministic on every platform.
     #[tokio::test]
     async fn review_mode_refine_pends_then_inject_text_accepts_and_clears_it() {
         let refine_state = RefineState::default();

@@ -1,0 +1,29 @@
+{
+  "name": "redrafter-e2e-real",
+  "version": "0.1.0",
+  "private": true,
+  "description": "D4 real-surface acceptance: tauri-driver + WebdriverIO against the packaged redrafter binary (Linux X11/Wayland, Windows), plus the macOS launch-smoke. See README.md for the per-OS run protocol -- none of this runs on a headless CI host.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:app": "cd ../app && pnpm build",
+    "build:binary": "cargo build --manifest-path ../app/src-tauri/Cargo.toml --release",
+    "wdio": "wdio run ./wdio.conf.ts",
+    "wdio:x11": "DISPLAY=\"${DISPLAY:-:0}\" wdio run ./wdio.conf.ts",
+    "wdio:wayland": "wdio run ./wdio.conf.ts",
+    "wdio:windows": "wdio run ./wdio.conf.ts",
+    "launch-smoke:macos": "ts-node --project tsconfig.json specs/launch-smoke.macos.ts"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.19.9",
+    "@wdio/cli": "^9.20.0",
+    "@wdio/globals": "^9.20.0",
+    "@wdio/local-runner": "^9.20.0",
+    "@wdio/mocha-framework": "^9.20.0",
+    "@wdio/spec-reporter": "^9.20.0",
+    "@wdio/types": "^9.20.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "webdriverio": "^9.20.0"
+  }
+}
