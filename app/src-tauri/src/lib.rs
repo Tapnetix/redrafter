@@ -305,7 +305,7 @@ fn permission_gate<C: AccessibilityChecker>(checker: &C) -> Result<(), String> {
 /// orchestrator run, restore-buffer/pending-review bookkeeping — is
 /// unit-testable with fakes (`orchestrator`'s `FakeProvider`/`FakeCapture`/
 /// `FakeInjector`) instead of a live network call.
-async fn execute_refine<C: TextCapture, I: TextInjector>(
+pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
     refine_state: &RefineState,
     settings: &SettingsStore,
     model: String,
@@ -365,11 +365,37 @@ async fn run_refine_with(
     secrets: &SecretStore,
     refine_state: &RefineState,
 ) -> Result<RefineFlow, String> {
+    run_refine_with_checker(
+        &permission::SystemAccessibilityChecker,
+        settings,
+        connections,
+        secrets,
+        refine_state,
+    )
+    .await
+}
+
+/// [`run_refine_with`]'s actual body, generic over the
+/// [`AccessibilityChecker`] (mirrors [`permission_gate`]'s own genericity)
+/// so the *entire* gate-then-pipeline sequence is unit-testable with a fake
+/// granted checker on any platform: `run_refine_with` always passes the real
+/// `SystemAccessibilityChecker`, which on macOS calls the actual
+/// `AXIsProcessTrusted` and is denied in a headless test process -- with no
+/// seam here, a test exercising this sequence (e.g. proving `active_provider`'s
+/// rejection propagates through the full pipeline) would hit that real check
+/// first and never reach the behavior it's asserting.
+async fn run_refine_with_checker<C: AccessibilityChecker>(
+    checker: &C,
+    settings: &SettingsStore,
+    connections: &ConnectionStore,
+    secrets: &SecretStore,
+    refine_state: &RefineState,
+) -> Result<RefineFlow, String> {
     if is_paused(settings) {
         return Err(PAUSED_ERROR.to_string());
     }
 
-    permission_gate(&permission::SystemAccessibilityChecker)?;
+    permission_gate(checker)?;
 
     let (provider, model) = active_provider(connections, settings, secrets)?;
     let fallbacks = resolve_fallback_targets(connections, settings, secrets)?;
@@ -506,14 +532,29 @@ fn clear_pending_review(refine_state: &RefineState) {
     *refine_state.pending_review.lock().unwrap() = None;
 }
 
+/// [`inject_text_impl`]'s actual body, generic over the [`TextInjector`]
+/// (mirrors `execute_refine`'s own genericity) so the inject-then-clear
+/// sequence is unit-testable with a fake injector on any platform:
+/// `inject_text_impl` always injects through the real `text-inject` crate,
+/// which only implements injection on macOS -- there it drives the real
+/// Accessibility API, which fails headlessly (no focused UI element) before
+/// ever reaching the clear a test might want to assert.
+fn inject_text_with<I: TextInjector>(
+    injector: &I,
+    refine_state: &RefineState,
+    text: &str,
+) -> Result<(), String> {
+    injector.inject(text).map_err(|e| e.to_string())?;
+    clear_pending_review(refine_state);
+    Ok(())
+}
+
 /// Injects `text`, then clears any pending review result (see
 /// `clear_pending_review`). The plain logic behind the `inject_text`
 /// command, taking `&RefineState` directly so it's unit-testable without a
 /// `tauri::State` harness (mirrors `restore_original_buffer`).
 fn inject_text_impl(refine_state: &RefineState, text: &str) -> Result<(), String> {
-    text_inject::inject(text).map_err(|e| e.to_string())?;
-    clear_pending_review(refine_state);
-    Ok(())
+    inject_text_with(&SystemTextIo, refine_state, text)
 }
 
 /// Tauri command: injects `text` into the focused app in place of the
@@ -1076,20 +1117,22 @@ mod tests {
         assert!(injector.injected().is_empty(), "discard must never inject");
     }
 
-    /// The accept half of the review loop, macOS-only: `inject_text`
-    /// (Capture.tsx's Accept/Edit-accept) both injects the chosen text
-    /// *and* clears the pending review. Gated to macOS because `inject_text`
-    /// goes through the real `text-inject` crate, which only implements
-    /// injection there (off macOS it errors before reaching the clear --
-    /// covered by `inject_text_reports_the_platform_unsupported_error` and
-    /// the cross-platform `clear_pending_review_clears_a_populated_slot`).
+    /// The accept half of the review loop: `inject_text` (Capture.tsx's
+    /// Accept/Edit-accept) both injects the chosen text *and* clears the
+    /// pending review. Exercised through a FAKE injector (`inject_text_with`)
+    /// rather than the real `inject_text_impl`/`text-inject` crate: the real
+    /// one only implements injection on macOS, where it drives the actual
+    /// Accessibility API and fails headlessly (no focused UI element) before
+    /// ever reaching the clear this test asserts -- see
+    /// `inject_text_reports_the_platform_unsupported_error` for that
+    /// off-macOS error-mapping case, and `clear_pending_review_clears_a_populated_slot`
+    /// for the plain clear. This one is deterministic on every platform.
     #[tokio::test]
-    #[cfg(target_os = "macos")]
     async fn review_mode_refine_pends_then_inject_text_accepts_and_clears_it() {
         let refine_state = RefineState::default();
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
         settings.set(INJECT_MODE_KEY, "review").unwrap();
-        let injector = FakeInjector::default();
+        let refine_injector = FakeInjector::default();
 
         execute_refine(
             &refine_state,
@@ -1098,14 +1141,20 @@ mod tests {
             Arc::new(FakeProvider("refined text".to_string())),
             Vec::new(),
             FakeCapture("original text".to_string()),
-            injector,
+            refine_injector,
         )
         .await
         .expect("execute_refine should succeed");
         assert!(refine_state.pending_review.lock().unwrap().is_some());
 
-        inject_text_impl(&refine_state, "refined text").expect("inject should succeed on macOS");
+        let accept_injector = FakeInjector::default();
+        inject_text_with(&accept_injector, &refine_state, "refined text")
+            .expect("inject should succeed through the fake injector");
 
+        assert_eq!(
+            accept_injector.injected(),
+            vec!["refined text".to_string()]
+        );
         assert_eq!(refine_state.pending_review.lock().unwrap().clone(), None);
     }
 
@@ -1337,12 +1386,25 @@ mod tests {
         let (secrets, _dir) = new_secrets("run-refine-no-model");
         let refine_state = RefineState::default();
 
-        let result =
-            run_refine_with(&settings, &connections, &secrets, &refine_state).await;
+        // Drives `run_refine_with`'s actual body (`run_refine_with_checker`)
+        // through a FAKE granted checker -- not `run_refine_with` itself,
+        // which always passes the real `SystemAccessibilityChecker`. On
+        // macOS that real checker calls `AXIsProcessTrusted`, denied in a
+        // headless test process, which would reject with
+        // `PERMISSION_DENIED_ERROR` before ever reaching `active_provider`.
+        // With permission granted, this deterministically proves the real
+        // pipeline (not a stub) reaches `active_provider` and its
+        // `NO_ACTIVE_MODEL_ERROR` rejection propagates through, on every
+        // platform.
+        let result = run_refine_with_checker(
+            &FakeChecker(true),
+            &settings,
+            &connections,
+            &secrets,
+            &refine_state,
+        )
+        .await;
 
-        // No stored connection with an enabled model -> `active_provider`
-        // rejects with `NO_ACTIVE_MODEL_ERROR`, proving the real pipeline
-        // (not a stub) ran.
         assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
     }
 
