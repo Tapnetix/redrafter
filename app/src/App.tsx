@@ -10,13 +10,13 @@
 //      the settings shell (NavRail + Sidebar chrome around the selected
 //      screen).
 //
-// The Presets/History sections have no screen yet (Phase C); their
-// rail/sidebar nav items navigate to a "coming soon" placeholder so neither
-// is ever dead. Models (B8) and Connections (B7) are the Phase B screens
-// wired in here alongside Phase A's General/Behavior. The Capture panel and
-// the menu-bar Tray are each normally their own window (wired natively in
-// lib.rs / created from tauri.conf.json's trayIcon); their standalone
-// `/capture` and `/tray` routes stand in for those surfaces here.
+// The Presets section has no screen yet (Phase C); its rail/sidebar nav item
+// navigates to a "coming soon" placeholder so it's never dead. History (C4)
+// joins Models (B8) and Connections (B7) as the screens wired in here
+// alongside Phase A's General/Behavior. The Capture panel and the menu-bar
+// Tray are each normally their own window (wired natively in lib.rs /
+// created from tauri.conf.json's trayIcon); their standalone `/capture` and
+// `/tray` routes stand in for those surfaces here.
 //
 // B23 wires the shared `model-store` in: the Sidebar's active-model
 // indicator now reflects B8's real active model (refreshed whenever the
@@ -32,6 +32,7 @@ import General from '@/screens/General';
 import Behavior from '@/screens/Behavior';
 import Connections from '@/screens/Connections';
 import Models from '@/screens/Models';
+import History from '@/screens/History';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
 import { useModelStore } from '@/lib/model-store';
 import { applyTheme, loadTheme } from '@/lib/theme';
@@ -97,6 +98,8 @@ function SectionView({ section, onNavigate }: { section: Section; onNavigate: (s
       return <Connections onNavigateToModels={() => onNavigate('models')} />;
     case 'models':
       return <Models onNavigateToConnections={() => onNavigate('connections')} />;
+    case 'history':
+      return <History />;
     default:
       return <ComingSoon section={section} />;
   }

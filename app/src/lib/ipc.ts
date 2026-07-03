@@ -405,3 +405,56 @@ export function checkUpdates(): Promise<CheckUpdatesResult> {
 export function setLaunchAtLogin(enabled: boolean): Promise<void> {
   return invoke('tray_set_launch_login', { enabled });
 }
+
+// ── History (C4) ──
+/**
+ * One recorded past refine, mirroring `history.rs`'s `HistoryEntry`
+ * (`#[serde(rename_all = "camelCase")]`, so the Rust snake_case fields cross
+ * the wire as camelCase, matched here). `createdAt` is Unix epoch
+ * milliseconds; `command`, when present, is the inline command/preset
+ * trigger (e.g. `/formal`) that drove the original refine.
+ */
+export interface HistoryEntry {
+  id: string;
+  original: string;
+  refined: string;
+  model: string;
+  createdAt: number;
+  command?: string | null;
+}
+
+/** Lists every recorded refine, most recent first. Backed by `history_list`. */
+export function historyList(): Promise<HistoryEntry[]> {
+  return invoke<HistoryEntry[]>('history_list');
+}
+
+/** Returns the full detail of a single past refine. Backed by `history_get`. */
+export function historyGet(id: string): Promise<HistoryEntry> {
+  return invoke<HistoryEntry>('history_get', { id });
+}
+
+/**
+ * Restores a past entry's original text back into the focused app (a single
+ * call — the backend looks the entry up and injects it, reusing the same
+ * inject path as `restoreOriginal`/`injectText`). Resolves with the restored
+ * original. Backed by the `history_restore` Tauri command.
+ */
+export function historyRestore(id: string): Promise<string> {
+  return invoke<string>('history_restore', { id });
+}
+
+export interface HistoryReRefineArgs extends Record<string, unknown> {
+  id: string;
+  /** Omit to re-run with the entry's own model. */
+  model?: string;
+}
+
+/**
+ * Re-runs refine on a past entry's original text (optionally with a
+ * different model), injects the new result, and records it as a fresh
+ * history entry — the past entry itself is left untouched. Backed by the
+ * `history_rerefine` Tauri command.
+ */
+export function historyReRefine(args: HistoryReRefineArgs): Promise<HistoryEntry> {
+  return invoke<HistoryEntry>('history_rerefine', args);
+}

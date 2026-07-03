@@ -61,6 +61,12 @@ export function getTauriMockScript(data: TestData): string {
         favorites: new Set(
           (TEST_DATA.favoriteModels || []).map((f) => modelKey(f.connectionId, f.modelId)),
         ),
+        // Stateful history store (C4): seeded from TEST_DATA.historyEntries,
+        // mutated in place by history_rerefine (prepends a fresh entry) so a
+        // spec can re-refine an entry and immediately see the new one at the
+        // top of the list.
+        history: (TEST_DATA.historyEntries || []).slice(),
+        nextHistoryId: (TEST_DATA.historyEntries || []).length + 1,
       };
 
       function findConnection(id) {
@@ -385,6 +391,40 @@ export function getTauriMockScript(data: TestData): string {
           // ── Hotkey (A6/A14) ──
           case 'hotkey_set':
             return { ok: true, conflict: false };
+
+          // ── History (C4): list/restore/re-refine past refines ──
+          case 'history_list':
+            return state.history.slice();
+          case 'history_get': {
+            const id = args && args.id;
+            const entry = state.history.find((h) => h.id === id);
+            if (!entry) throw \`no history entry with id \${id}\`;
+            return entry;
+          }
+          case 'history_restore': {
+            const id = args && args.id;
+            const entry = state.history.find((h) => h.id === id);
+            if (!entry) throw \`no history entry with id \${id}\`;
+            return entry.original;
+          }
+          case 'history_rerefine': {
+            const id = args && args.id;
+            const modelArg = args && args.model;
+            const entry = state.history.find((h) => h.id === id);
+            if (!entry) throw \`no history entry with id \${id}\`;
+            const model = modelArg || entry.model;
+            const refined = TEST_DATA.historyRerefineRefined || \`\${entry.original} (re-refined)\`;
+            const newEntry = {
+              id: String(state.nextHistoryId++),
+              original: entry.original,
+              refined,
+              model,
+              createdAt: Date.now(),
+              command: entry.command || null,
+            };
+            state.history.unshift(newEntry);
+            return newEntry;
+          }
 
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);
