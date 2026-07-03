@@ -127,19 +127,49 @@ impl EncryptedFileBackend {
         SystemRandom::new()
             .fill(&mut key)
             .map_err(|_| anyhow::anyhow!("failed to generate a master key"))?;
-        fs::write(path, key).with_context(|| format!("failed to write {}", path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("failed to restrict permissions on {}", path.display()))?;
-        }
+        // A stale file at this point (the `fs::read` above fell through
+        // without returning) is corrupt/wrong-length -- clear it so the
+        // owner-only `create_new` below doesn't fail with "already exists".
+        let _ = fs::remove_file(path);
+        Self::write_master_key(path, &key)?;
         Ok(key)
+    }
+
+    /// Creates `path` owner-only (unix: `0600`) from the moment it comes
+    /// into existence -- no separate `fs::write` + `set_permissions` step,
+    /// which would leave the 32-byte AES master key briefly group/world
+    /// readable between the two syscalls.
+    #[cfg(unix)]
+    fn write_master_key(path: &Path, key: &[u8; MASTER_KEY_LEN]) -> Result<()> {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("failed to create {}", path.display()))?;
+        file.write_all(key)
+            .with_context(|| format!("failed to write {}", path.display()))
+    }
+
+    #[cfg(not(unix))]
+    fn write_master_key(path: &Path, key: &[u8; MASTER_KEY_LEN]) -> Result<()> {
+        fs::write(path, key).with_context(|| format!("failed to write {}", path.display()))
     }
 
     fn load_map(&self) -> Result<EncryptedMap> {
         match fs::read_to_string(&self.secrets_path) {
-            Ok(contents) => Ok(serde_json::from_str(&contents).unwrap_or_default()),
+            // An empty file is still legitimately "no secrets yet" (e.g.
+            // truncated by a prior crash right after creation) -- only a
+            // NON-EMPTY unparseable file is corruption. Propagating that
+            // as an error (rather than `unwrap_or_default`'s silent empty
+            // map) matters because the next `set` would otherwise persist
+            // that empty map and destroy every previously stored secret.
+            Ok(contents) if contents.trim().is_empty() => Ok(EncryptedMap::new()),
+            Ok(contents) => serde_json::from_str(&contents)
+                .with_context(|| format!("corrupt secrets file {}", self.secrets_path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(EncryptedMap::new()),
             Err(e) => Err(e.into()),
         }
@@ -523,17 +553,46 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_non_empty_secrets_file_fails_loudly_instead_of_silently_wiping_keys() {
+        let (backend, dir) = new_backend("corrupt-store");
+        // Establish a real file first, then corrupt it -- an absent/empty
+        // file is still legitimately an empty map (first run), but a
+        // NON-EMPTY unparseable file must never be treated as "no secrets".
+        backend.set("conn-1", "sk-secret").unwrap();
+        let path = dir.0.join("secrets.enc.json");
+        fs::write(&path, "not valid json {{{").unwrap();
+
+        assert!(
+            backend.get("conn-1").is_err(),
+            "a corrupt secrets file must error, not silently look empty"
+        );
+    }
+
+    #[test]
     fn tampered_ciphertext_fails_to_decrypt_rather_than_returning_garbage() {
         let (backend, dir) = new_backend("tamper");
         backend.set("conn-1", "sk-secret").unwrap();
 
-        // Flip a byte in the persisted (base64) blob -- decryption must
+        // Deterministically flip a byte in the ciphertext+tag region (just
+        // past the nonce) of the persisted (base64) blob -- decryption must
         // fail loudly (AEAD tag mismatch) rather than silently returning
-        // corrupted plaintext.
+        // corrupted plaintext. (A previous version of this test tampered by
+        // string-replacing 'a'/'A' in the base64 text, which was a no-op --
+        // and the test spuriously green -- whenever the random nonce/
+        // ciphertext for that run happened to contain neither letter.)
         let path = dir.0.join("secrets.enc.json");
-        let mut contents = fs::read_to_string(&path).unwrap();
-        contents = contents.replace('a', "b").replace('A', "B");
-        fs::write(&path, contents).unwrap();
+        let mut map: EncryptedMap =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let before = map.get("conn-1").unwrap().clone();
+        let mut raw = base64::engine::general_purpose::STANDARD
+            .decode(&before)
+            .unwrap();
+        assert!(NONCE_LEN < raw.len(), "ciphertext too short to tamper with");
+        raw[NONCE_LEN] ^= 0x01;
+        let after = base64::engine::general_purpose::STANDARD.encode(&raw);
+        assert_ne!(before, after, "tampering must actually mutate the blob");
+        map.insert("conn-1".to_string(), after);
+        fs::write(&path, serde_json::to_string(&map).unwrap()).unwrap();
 
         assert!(backend.get("conn-1").is_err());
     }
