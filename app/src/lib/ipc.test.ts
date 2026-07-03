@@ -7,6 +7,12 @@ import {
   hotkeySet,
   connectionAdd,
   connectionList,
+  connectionEdit,
+  connectionRemove,
+  connectionTest,
+  connectionRefreshModels,
+  modelAddManual,
+  secretsSet,
   permissionOpenSettings,
   refine,
   restoreOriginal,
@@ -57,7 +63,13 @@ describe('ipc', () => {
 
   it('connectionList invokes connection_list and returns the stored connections', async () => {
     const connections = [
-      { id: '1', providerKind: 'ollama', baseUrl: 'http://localhost:11434', enabledModels: ['default'] },
+      {
+        id: '1',
+        providerKind: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        enabledModels: ['default'],
+        availableModels: [],
+      },
     ];
     mockedInvoke.mockResolvedValue(connections);
 
@@ -71,6 +83,7 @@ describe('ipc', () => {
       providerKind: 'openai',
       baseUrl: 'https://api.openai.com',
       enabledModels: ['gpt-4o-mini'],
+      availableModels: [],
     });
 
     const result = await connectionAdd({
@@ -85,6 +98,97 @@ describe('ipc', () => {
       apiKey: 'sk-test',
     });
     expect(result.enabledModels).toEqual(['gpt-4o-mini']);
+  });
+
+  it('connectionEdit invokes connection_edit with the given args and returns the updated connection', async () => {
+    mockedInvoke.mockResolvedValue({
+      id: '1',
+      providerKind: 'openai',
+      baseUrl: 'https://api.example.com',
+      enabledModels: ['gpt-4o-mini'],
+      availableModels: ['gpt-4o-mini', 'gpt-4o'],
+    });
+
+    const result = await connectionEdit({ id: '1', baseUrl: 'https://api.example.com' });
+
+    expect(mockedInvoke).toHaveBeenCalledWith('connection_edit', {
+      id: '1',
+      baseUrl: 'https://api.example.com',
+    });
+    expect(result.baseUrl).toBe('https://api.example.com');
+  });
+
+  it('connectionRemove invokes connection_remove with the id', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await connectionRemove('1');
+    expect(mockedInvoke).toHaveBeenCalledWith('connection_remove', { id: '1' });
+  });
+
+  it('connectionTest invokes connection_test with the given args', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await connectionTest({ providerKind: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: 'sk-test' });
+
+    expect(mockedInvoke).toHaveBeenCalledWith('connection_test', {
+      providerKind: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'sk-test',
+    });
+  });
+
+  it('connectionRefreshModels resolves a "discovered" result on success', async () => {
+    mockedInvoke.mockResolvedValue({
+      id: '1',
+      providerKind: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      enabledModels: ['claude-opus-4-6'],
+      availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    });
+
+    const result = await connectionRefreshModels('1');
+
+    expect(mockedInvoke).toHaveBeenCalledWith('connection_refresh_models', { id: '1' });
+    expect(result).toEqual({
+      status: 'discovered',
+      connection: {
+        id: '1',
+        providerKind: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        enabledModels: ['claude-opus-4-6'],
+        availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+      },
+    });
+  });
+
+  it('connectionRefreshModels normalizes a rejection into a "manual_required" result', async () => {
+    mockedInvoke.mockRejectedValue('provider returned no models');
+
+    const result = await connectionRefreshModels('1');
+
+    expect(result).toEqual({ status: 'manual_required', reason: 'provider returned no models' });
+  });
+
+  it('modelAddManual invokes model_add_manual with the id and model id', async () => {
+    mockedInvoke.mockResolvedValue({
+      id: '1',
+      providerKind: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      enabledModels: ['my-custom-model'],
+      availableModels: ['my-custom-model'],
+    });
+
+    const result = await modelAddManual('1', 'my-custom-model');
+
+    expect(mockedInvoke).toHaveBeenCalledWith('model_add_manual', { id: '1', modelId: 'my-custom-model' });
+    expect(result.availableModels).toEqual(['my-custom-model']);
+  });
+
+  it('secretsSet invokes secrets_set with the chosen storage location', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await secretsSet('keychain');
+    expect(mockedInvoke).toHaveBeenCalledWith('secrets_set', { location: 'keychain' });
   });
 
   it('permissionOpenSettings invokes permission_open_settings with no args', async () => {

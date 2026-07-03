@@ -28,6 +28,7 @@ describe('FirstRun', () => {
       providerKind: 'anthropic',
       baseUrl: 'https://api.anthropic.com',
       enabledModels: ['claude-3-5-sonnet-latest'],
+      availableModels: [],
     });
 
     render(<FirstRun />);
@@ -62,6 +63,7 @@ describe('FirstRun', () => {
       providerKind: 'ollama',
       baseUrl: 'http://localhost:11434',
       enabledModels: ['default'],
+      availableModels: [],
     });
 
     render(<FirstRun />);
@@ -98,6 +100,7 @@ describe('FirstRun', () => {
       providerKind: 'anthropic',
       baseUrl: 'https://api.anthropic.com',
       enabledModels: ['claude-3-5-sonnet-latest'],
+      availableModels: [],
     });
 
     render(<FirstRun />);
