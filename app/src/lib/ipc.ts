@@ -459,6 +459,16 @@ export function historyReRefine(args: HistoryReRefineArgs): Promise<HistoryEntry
   return invoke<HistoryEntry>('history_rerefine', args);
 }
 
+/** Looks up a past entry so the caller can copy its refined text (C12). Backed by history_copy. */
+export function historyCopy(id: string): Promise<HistoryEntry> {
+  return invoke<HistoryEntry>('history_copy', { id });
+}
+
+/** Clears every recorded refine (C15). Backed by history_clear. */
+export function historyClear(): Promise<void> {
+  return invoke('history_clear');
+}
+
 // ── Presets (C3/C3b) ──
 /** A single before/after few-shot example, mirroring `presets.rs`'s
  * `PresetExample`. */

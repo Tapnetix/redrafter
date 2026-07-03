@@ -515,6 +515,16 @@ export function getTauriMockScript(data: TestData): string {
             state.history.unshift(newEntry);
             return newEntry;
           }
+          case 'history_copy': {
+            const id = args && args.id;
+            const entry = state.history.find((h) => h.id === id);
+            if (!entry) throw 'no history entry with id ' + id;
+            return entry;
+          }
+          case 'history_clear': {
+            state.history = [];
+            return null;
+          }
           // ── Presets (C3/C3b): built-in + user store, used by Presets.tsx ──
           case 'preset_list':
             return presetListAll();
