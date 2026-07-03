@@ -599,11 +599,17 @@ mod tests {
     async fn tray_refine_propagates_the_pipeline_result() {
         let refine_state = RefineState::default();
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
+        let presets =
+            crate::presets::PresetStore::open_in_memory().expect("failed to open in-memory presets");
+        let history =
+            crate::history::HistoryStore::open_in_memory().expect("failed to open in-memory history");
         let injector = FakeInjector::default();
 
         let flow = crate::execute_refine(
             &refine_state,
             &settings,
+            &presets,
+            &history,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
             Vec::new(),

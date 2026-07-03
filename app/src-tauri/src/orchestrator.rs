@@ -26,6 +26,7 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::command_parser;
+use crate::presets::PresetStore;
 use crate::prompt_builder::{self, BuildOptions, QuoteMode};
 use crate::quote_parser;
 
@@ -138,25 +139,66 @@ impl RefineFlow {
     }
 }
 
-/// Parses `original`'s inline commands (B4's `command_parser`) and resolves
-/// its quoted context — an explicit `/q` tag if present, otherwise the
-/// Behavior screen's `quote_mode` decides whether to run `quote_parser`'s
-/// heuristic detection ([`QuoteMode::AnswerOnly`]) or leave the selection
-/// whole ([`QuoteMode::IncludeQuote`]/[`QuoteMode::LetDirectionDecide`]) —
-/// into the text to actually refine (`draft`) plus a [`BuildOptions`] with
-/// `direction`/`quote`/`lang` resolved (a parsed tag overrides the
-/// corresponding field already set on `opts`, e.g. a settings-configured
-/// default direction; `model`/`temperature`/`max_tokens`/`quote_mode` are
-/// untouched, since those aren't tag-driven).
+/// Resolves a parsed selection's preset trigger (B4's `command_parser`,
+/// `ParsedCommand::preset`) to its stored [`presets::Preset`](crate::presets::Preset)
+/// (built-in or user override) via `presets`' `PresetStore::resolve` --
+/// closing the B4->C3 gap: before C17, the trigger was parsed but nothing
+/// ever looked it up. `presets: None` (no store available/managed, e.g. a
+/// caller that never wires one) or an unrecognized trigger both resolve to
+/// `None`, same as "no preset" — this never turns a lookup failure into a
+/// pipeline error.
+fn resolve_preset_trigger(trigger: Option<&str>, presets: Option<&PresetStore>) -> Option<crate::presets::Preset> {
+    let store = presets?;
+    let trigger = trigger?;
+    store.resolve(trigger).ok().flatten()
+}
+
+/// Parses a preset's stored `inject` override (`"blind"`/`"review"`) into an
+/// [`InjectMode`]. Anything else (unset, or an unrecognized value) is `None`
+/// — no override, so [`Orchestrator::refine_with`]'s own `mode` argument
+/// (the Behavior screen's configured inject mode) wins.
+fn parse_inject_mode(raw: &str) -> Option<InjectMode> {
+    match raw {
+        "review" => Some(InjectMode::Review),
+        "blind" => Some(InjectMode::Blind),
+        _ => None,
+    }
+}
+
+/// Parses `original`'s inline commands (B4's `command_parser`), resolves a
+/// preset trigger through `presets` if one is present ([`resolve_preset_trigger`],
+/// C17), and resolves the quoted context — an explicit `/q` tag if present,
+/// otherwise the Behavior screen's `quote_mode` decides whether to run
+/// `quote_parser`'s heuristic detection ([`QuoteMode::AnswerOnly`]) or leave
+/// the selection whole ([`QuoteMode::IncludeQuote`]/[`QuoteMode::LetDirectionDecide`])
+/// — into the text to actually refine (`draft`), a [`BuildOptions`] with
+/// `direction`/`model`/`quote`/`lang` resolved, and any inject-mode override
+/// the resolved preset carries.
 ///
-/// With no tags at all, `command_parser::parse` returns the trimmed
-/// selection as `message` and everything else `None`, so `direction`/`lang`
-/// are a no-op over `opts`; only `quote`/`draft` depend on `quote_mode`.
+/// Precedence (most to least specific), for each of `direction`/`lang`: an
+/// explicit tag (`/rd`/`/lang`) wins over a resolved preset's own value,
+/// which wins over whatever `opts` already had set (e.g. a settings-
+/// configured default direction). `model` has no tag of its own, so it's
+/// just the resolved preset's model if one is set, else `opts.model`
+/// unchanged. `temperature`/`max_tokens`/`quote_mode` are untouched, since
+/// none of those are tag- or preset-driven.
 ///
-/// A plain function of its inputs (no `&self`, no I/O) so it's trivial to
-/// unit test on its own, independent of the async model-calling machinery.
-fn resolve_prompt(original: &str, opts: &BuildOptions) -> (String, BuildOptions) {
+/// With no tags and no preset match at all, `command_parser::parse` returns
+/// the trimmed selection as `message` and everything else `None`, so this
+/// is a no-op over `opts` beyond `quote`/`draft`'s `quote_mode`-driven split.
+///
+/// A plain function of its inputs (no `&self`) — the one bit of I/O is the
+/// `presets` lookup itself (a local, synchronous SQLite read, same as every
+/// other store in this codebase), so it stays trivial to unit test with an
+/// in-memory `PresetStore` or `None`, independent of the async model-calling
+/// machinery.
+pub(crate) fn resolve_prompt(
+    original: &str,
+    opts: &BuildOptions,
+    presets: Option<&PresetStore>,
+) -> (String, BuildOptions, Option<InjectMode>) {
     let parsed = command_parser::parse(original);
+    let preset = resolve_preset_trigger(parsed.preset.as_deref(), presets);
 
     let (quote, draft) = match parsed.quote {
         // An explicit `/q` tag always wins, regardless of `quote_mode`.
@@ -171,17 +213,31 @@ fn resolve_prompt(original: &str, opts: &BuildOptions) -> (String, BuildOptions)
         },
     };
 
+    let preset_inject_mode = preset
+        .as_ref()
+        .and_then(|p| p.inject.as_deref())
+        .and_then(parse_inject_mode);
+
     let resolved = BuildOptions {
-        direction: parsed.direction.or_else(|| opts.direction.clone()),
-        model: opts.model.clone(),
+        direction: parsed
+            .direction
+            .or_else(|| preset.as_ref().map(|p| p.direction.clone()))
+            .or_else(|| opts.direction.clone()),
+        model: preset
+            .as_ref()
+            .and_then(|p| p.model.clone())
+            .unwrap_or_else(|| opts.model.clone()),
         temperature: opts.temperature,
         max_tokens: opts.max_tokens,
         quote: quote.or_else(|| opts.quote.clone()),
-        lang: parsed.lang.or_else(|| opts.lang.clone()),
+        lang: parsed
+            .lang
+            .or_else(|| preset.as_ref().and_then(|p| p.lang.clone()))
+            .or_else(|| opts.lang.clone()),
         quote_mode: opts.quote_mode,
     };
 
-    (draft, resolved)
+    (draft, resolved, preset_inject_mode)
 }
 
 /// Orchestrates the refine pipeline: capture -> parse/resolve prompt ->
@@ -235,16 +291,27 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
         opts: &BuildOptions,
         cancel: CancellationToken,
     ) -> Result<RefineOutcome> {
-        let flow = self.refine_with(opts, &[], InjectMode::Blind, cancel).await?;
+        let flow = self
+            .refine_with(opts, &[], InjectMode::Blind, None, cancel)
+            .await?;
         Ok(flow.into_outcome())
     }
 
     /// Runs the full refine pipeline: capture the selection, parse its
-    /// inline commands/quote (`resolve_prompt`), call the active model
-    /// (`opts.model` via the primary provider), retrying `fallbacks` in
-    /// order on failure, then either inject the result immediately
-    /// (`InjectMode::Blind`) or record it as pending review
-    /// (`InjectMode::Review`) without injecting anything.
+    /// inline commands/quote and resolve any preset trigger through
+    /// `presets` (`resolve_prompt`, C17), call the active model
+    /// (`opts.model`, or the resolved preset's own model override, via the
+    /// primary provider), retrying `fallbacks` in order on failure, then
+    /// either inject the result immediately (`InjectMode::Blind`) or record
+    /// it as pending review (`InjectMode::Review`) without injecting
+    /// anything — unless the resolved preset carries its own `inject`
+    /// override, which takes precedence over the `mode` argument (the
+    /// preset is more specific than the caller's general-purpose default).
+    ///
+    /// `presets: None` skips preset resolution entirely (no store managed,
+    /// or a caller — like `history_rerefine_impl`, replaying a past entry's
+    /// original — that intentionally doesn't want an inline trigger
+    /// re-resolved).
     ///
     /// The captured original is stashed in the restore buffer before the
     /// model call (the step most likely to fail) so it survives every
@@ -257,6 +324,7 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
         opts: &BuildOptions,
         fallbacks: &[FallbackTarget],
         mode: InjectMode,
+        presets: Option<&PresetStore>,
         cancel: CancellationToken,
     ) -> Result<RefineFlow> {
         let original = self.capture.capture()?;
@@ -267,7 +335,8 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
         // pipeline (including every fallback attempt) succeeds.
         *self.restore_buffer.lock().unwrap() = Some(original.clone());
 
-        let (draft, resolved_opts) = resolve_prompt(&original, opts);
+        let (draft, resolved_opts, preset_inject_mode) = resolve_prompt(&original, opts, presets);
+        let effective_mode = preset_inject_mode.unwrap_or(mode);
         let response = self
             .call_with_fallback(&draft, &resolved_opts, fallbacks, cancel)
             .await?;
@@ -278,7 +347,7 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
             model: response.model,
         };
 
-        match mode {
+        match effective_mode {
             InjectMode::Blind => {
                 self.injector.inject(&outcome.refined)?;
                 Ok(RefineFlow::Injected(outcome))
@@ -414,8 +483,8 @@ mod tests {
 
     #[test]
     fn answer_only_quote_mode_splits_the_detected_quote_out_of_the_draft() {
-        let (draft, resolved) =
-            resolve_prompt(QUOTED_SELECTION, &opts_with_quote_mode(QuoteMode::AnswerOnly));
+        let (draft, resolved, _mode) =
+            resolve_prompt(QUOTED_SELECTION, &opts_with_quote_mode(QuoteMode::AnswerOnly), None);
 
         // Only the user's own words remain in the draft; the quoted reply is
         // pulled out as reference-only context.
@@ -428,8 +497,8 @@ mod tests {
 
     #[test]
     fn include_quote_mode_leaves_the_whole_selection_as_the_draft() {
-        let (draft, resolved) =
-            resolve_prompt(QUOTED_SELECTION, &opts_with_quote_mode(QuoteMode::IncludeQuote));
+        let (draft, resolved, _mode) =
+            resolve_prompt(QUOTED_SELECTION, &opts_with_quote_mode(QuoteMode::IncludeQuote), None);
 
         // No heuristic split: the whole selection is refined, no quote pulled
         // out.
@@ -439,9 +508,10 @@ mod tests {
 
     #[test]
     fn let_direction_decide_quote_mode_also_skips_the_heuristic_split() {
-        let (draft, resolved) = resolve_prompt(
+        let (draft, resolved, _mode) = resolve_prompt(
             QUOTED_SELECTION,
             &opts_with_quote_mode(QuoteMode::LetDirectionDecide),
+            None,
         );
 
         assert_eq!(draft, QUOTED_SELECTION);
@@ -453,10 +523,105 @@ mod tests {
         // Even in a mode that would otherwise skip the heuristic split, an
         // explicit `/q` tag is always honored.
         let selection = "/q previous thread context /m my actual draft";
-        let (draft, resolved) =
-            resolve_prompt(selection, &opts_with_quote_mode(QuoteMode::IncludeQuote));
+        let (draft, resolved, _mode) =
+            resolve_prompt(selection, &opts_with_quote_mode(QuoteMode::IncludeQuote), None);
 
         assert_eq!(resolved.quote.as_deref(), Some("previous thread context"));
         assert_eq!(draft, "my actual draft");
+    }
+
+    // ---- preset trigger resolution (C17: closes the B4->C3 gap) ----
+
+    fn store_with_standup_preset() -> PresetStore {
+        let store = PresetStore::open_in_memory().expect("failed to open in-memory preset store");
+        store
+            .save(
+                "standup",
+                "Reformat into Yesterday / Today / Blockers.",
+                Some("claude-opus-4-6"),
+                Some("de"),
+                Some("review"),
+                &[],
+            )
+            .expect("failed to save the standup preset");
+        store
+    }
+
+    #[test]
+    fn a_preset_trigger_folds_its_direction_model_and_lang_into_the_built_request() {
+        let presets = store_with_standup_preset();
+        let selection = "/standup shipped the api, blocked on design review";
+
+        let (draft, resolved, mode) = resolve_prompt(
+            selection,
+            &BuildOptions {
+                model: "gpt-5.1".to_string(),
+                ..BuildOptions::default()
+            },
+            Some(&presets),
+        );
+
+        assert_eq!(draft, "shipped the api, blocked on design review");
+        assert_eq!(
+            resolved.direction.as_deref(),
+            Some("Reformat into Yesterday / Today / Blockers.")
+        );
+        // The preset's own model overrides the caller's `opts.model`.
+        assert_eq!(resolved.model, "claude-opus-4-6");
+        assert_eq!(resolved.lang.as_deref(), Some("de"));
+        // ...and its `inject: "review"` override reaches the caller as the
+        // resolved inject-mode override.
+        assert_eq!(mode, Some(InjectMode::Review));
+
+        let request = prompt_builder::build(&draft, &resolved);
+        // The preset's direction, plus (since it also carries a `lang`
+        // override) `prompt_builder::build`'s appended target-language
+        // instruction.
+        assert!(request.messages[0]
+            .content
+            .starts_with("Reformat into Yesterday / Today / Blockers."));
+        assert!(request.messages[0].content.contains("de"));
+        assert_eq!(request.model, "claude-opus-4-6");
+    }
+
+    #[test]
+    fn an_explicit_rd_tag_wins_over_a_triggered_presets_direction() {
+        let presets = store_with_standup_preset();
+        let selection = "/standup /rd keep it as one paragraph, no bullets";
+
+        let (_draft, resolved, _mode) =
+            resolve_prompt(selection, &BuildOptions::default(), Some(&presets));
+
+        assert_eq!(
+            resolved.direction.as_deref(),
+            Some("keep it as one paragraph, no bullets")
+        );
+    }
+
+    #[test]
+    fn an_unknown_preset_trigger_resolves_to_no_override() {
+        let presets = store_with_standup_preset();
+        let selection = "/does-not-exist just some text";
+
+        let (draft, resolved, mode) =
+            resolve_prompt(selection, &BuildOptions::default(), Some(&presets));
+
+        assert_eq!(draft, "just some text");
+        assert_eq!(resolved.direction, None);
+        assert_eq!(mode, None);
+    }
+
+    #[test]
+    fn no_preset_store_means_a_trigger_is_never_resolved() {
+        // A trigger is still parsed (it's not a reserved tag), but with no
+        // store to look it up in, it can't resolve to an override -- the
+        // trigger's own text still folds into the message as usual.
+        let selection = "/standup shipped the api";
+
+        let (draft, resolved, mode) = resolve_prompt(selection, &BuildOptions::default(), None);
+
+        assert_eq!(draft, "shipped the api");
+        assert_eq!(resolved.direction, None);
+        assert_eq!(mode, None);
     }
 }

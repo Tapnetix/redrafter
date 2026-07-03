@@ -28,6 +28,9 @@ mod prompt_builder {
         "/src/prompt_builder.rs"
     ));
 }
+mod presets {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/presets.rs"));
+}
 mod orchestrator {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/orchestrator.rs"));
 }

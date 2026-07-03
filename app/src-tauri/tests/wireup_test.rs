@@ -31,11 +31,13 @@ use tauri::Manager;
 
 /// Every command the composition root must register (per the plan's
 /// `done_when`): the Phase A screens' commands plus the tray skeleton's
-/// `tray_refine`/`tray_quit` (A14), and every Phase B command B23 wires up
+/// `tray_refine`/`tray_quit` (A14), every Phase B command B23 wires up
 /// (connections CRUD/test/refresh, model curation, secrets, and the full
-/// tray surface). This list is the wire-up gate's source of truth and must
-/// match `lib.rs`'s `invoke_handler!`, `build.rs`'s `COMMANDS`, and
-/// `capabilities/default.json`'s grants.
+/// tray surface), and every Phase C command C17 wires up (presets
+/// CRUD/import/export/resolve, history list/detail/restore/re-refine/copy/
+/// clear, and the feedback config get/set). This list is the wire-up gate's
+/// source of truth and must match `lib.rs`'s `invoke_handler!`, `build.rs`'s
+/// `COMMANDS`, and `capabilities/default.json`'s grants.
 const EXPECTED_COMMANDS: &[&str] = &[
     // Phase A (A14)
     "settings_get",
@@ -73,6 +75,25 @@ const EXPECTED_COMMANDS: &[&str] = &[
     "tray_resume",
     "tray_check_updates",
     "tray_set_launch_login",
+    // Phase C presets (C3/C3b/C8/C9/C10, resolution wired by C17)
+    "preset_list",
+    "preset_save",
+    "preset_delete",
+    "preset_duplicate",
+    "preset_reset_default",
+    "preset_export",
+    "preset_import",
+    "preset_resolve",
+    // Phase C history (C4/C12-C15)
+    "history_list",
+    "history_get",
+    "history_restore",
+    "history_rerefine",
+    "history_copy",
+    "history_clear",
+    // Phase C feedback (C1/C5)
+    "feedback_config_get",
+    "feedback_config_set",
 ];
 
 fn build_test_app() -> tauri::App<tauri::test::MockRuntime> {

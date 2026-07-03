@@ -11,43 +11,32 @@
 //      screen).
 //
 // History (C4) and Presets (C3) join Models (B8), Connections (B7), General,
-// Behavior, and Tray as the screens wired into the section switcher here.
-// alongside Phase A's General/Behavior. The Capture panel and the menu-bar
-// Tray are each normally their own window (wired natively in lib.rs /
-// created from tauri.conf.json's trayIcon); their standalone `/capture` and
-// `/tray` routes stand in for those surfaces here.
+// and Behavior as the screens wired into the section switcher here. As of
+// C17 that switcher (and the section-title map, and the nav rail/sidebar
+// item list) all derive from the one shared `screens-index` registry rather
+// than each re-listing the sections — so a new screen is registered in one
+// place, not four. The Capture panel and the menu-bar Tray are each normally
+// their own window (wired natively in lib.rs / created from
+// tauri.conf.json's trayIcon); their standalone `/capture` and `/tray`
+// routes stand in for those surfaces here.
 //
 // B23 wires the shared `model-store` in: the Sidebar's active-model
 // indicator now reflects B8's real active model (refreshed whenever the
 // section changes, so a pick made on the Models screen shows up on return),
 // rather than only the Phase A first-enabled-connection heuristic.
 
-import { useCallback, useEffect, useState } from 'react';
-import NavRail, { type Section } from '@/components/NavRail';
+import { useCallback, useEffect, useState, type ComponentType } from 'react';
+import NavRail from '@/components/NavRail';
 import Sidebar from '@/components/Sidebar';
 import Onboarding from '@/screens/Onboarding';
 import FirstRun from '@/screens/FirstRun';
-import General from '@/screens/General';
-import Behavior from '@/screens/Behavior';
-import Connections from '@/screens/Connections';
-import Models from '@/screens/Models';
-import History from '@/screens/History';
-import Presets from '@/screens/Presets';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
 import { useModelStore } from '@/lib/model-store';
 import { applyTheme, loadTheme } from '@/lib/theme';
+import { SECTION_TITLES, screenById, type Section } from '@/lib/screens-index';
 
 /** Where the boot check has decided the user should land. */
 type Route = 'loading' | 'onboarding' | 'first-run' | 'settings';
-
-const SECTION_TITLES: Record<Section, string> = {
-  general: 'General',
-  connections: 'Connections',
-  models: 'Models',
-  behavior: 'Behavior',
-  presets: 'Presets',
-  history: 'History',
-};
 
 /**
  * Decides the boot route from backend state: no Accessibility -> onboarding;
@@ -75,36 +64,19 @@ async function decideRoute(): Promise<Route> {
   return 'settings';
 }
 
-function ComingSoon({ section }: { section: Section }) {
-  return (
-    <div className="settings" data-testid={`section-${section}-placeholder`}>
-      <section className="sec">
-        <h2 className="sec__title">{SECTION_TITLES[section]}</h2>
-        <p className="muted tiny" style={{ margin: 0 }}>
-          The {SECTION_TITLES[section]} screen arrives in a later phase.
-        </p>
-      </section>
-    </div>
-  );
-}
-
+/** Mounts the registered screen for `section` from the shared
+ * `screens-index`, threading the app's `navigate` callback into the screens
+ * (Connections/Models) that cross-link to another section. Deriving this
+ * from the registry (rather than a per-section `switch`) is what keeps a new
+ * screen a one-line registry edit instead of another `App.tsx` change. */
 function SectionView({ section, onNavigate }: { section: Section; onNavigate: (section: Section) => void }) {
-  switch (section) {
-    case 'general':
-      return <General />;
-    case 'behavior':
-      return <Behavior />;
-    case 'connections':
-      return <Connections onNavigateToModels={() => onNavigate('models')} />;
-    case 'models':
-      return <Models onNavigateToConnections={() => onNavigate('connections')} />;
-    case 'history':
-      return <History />;
-    case 'presets':
-      return <Presets />;
-    default:
-      return <ComingSoon section={section} />;
-  }
+  const { Component, props } = screenById(section);
+  const resolvedProps = props ? props(onNavigate) : {};
+  // The registry's `Component`/`props` pairing is validated at the type
+  // level in `screens-index`; here they're combined dynamically, so a cast
+  // to a permissive element type is unavoidable at the call site.
+  const Screen = Component as ComponentType<Record<string, unknown>>;
+  return <Screen {...resolvedProps} />;
 }
 
 export default function App() {

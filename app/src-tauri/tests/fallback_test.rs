@@ -27,6 +27,9 @@ mod prompt_builder {
         "/src/prompt_builder.rs"
     ));
 }
+mod presets {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/presets.rs"));
+}
 mod orchestrator {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/orchestrator.rs"));
 }
@@ -173,6 +176,7 @@ mod fallback_and_review_tests {
                 &opts("primary-model"),
                 &[FallbackTarget::new(Arc::new(fallback.clone()), "fallback-model")],
                 InjectMode::Blind,
+                None,
                 CancellationToken::new(),
             )
             .await
@@ -203,6 +207,7 @@ mod fallback_and_review_tests {
                     FallbackTarget::new(Arc::new(second.clone()), "second-model"),
                 ],
                 InjectMode::Blind,
+                None,
                 CancellationToken::new(),
             )
             .await
@@ -228,6 +233,7 @@ mod fallback_and_review_tests {
                     "fallback-model",
                 )],
                 InjectMode::Blind,
+                None,
                 CancellationToken::new(),
             )
             .await;
@@ -260,6 +266,7 @@ mod fallback_and_review_tests {
                 &opts("primary-model"),
                 &[FallbackTarget::new(Arc::new(never_called.clone()), "never-called-model")],
                 InjectMode::Blind,
+                None,
                 cancel,
             )
             .await;
@@ -283,7 +290,7 @@ mod fallback_and_review_tests {
         );
 
         let flow = orch
-            .refine_with(&opts("fake-model"), &[], InjectMode::Blind, CancellationToken::new())
+            .refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
             .await
             .expect("blind refine should succeed");
 
@@ -301,7 +308,7 @@ mod fallback_and_review_tests {
         );
 
         let flow = orch
-            .refine_with(&opts("fake-model"), &[], InjectMode::Review, CancellationToken::new())
+            .refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -325,7 +332,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -344,7 +351,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -363,7 +370,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -396,7 +403,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -441,7 +448,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -462,7 +469,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -492,7 +499,7 @@ mod fallback_and_review_tests {
             quote_mode: QuoteMode::AnswerOnly,
             ..opts("fake-model")
         };
-        orch.refine_with(&opts, &[], InjectMode::Blind, CancellationToken::new())
+        orch.refine_with(&opts, &[], InjectMode::Blind, None, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -515,7 +522,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -533,7 +540,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
