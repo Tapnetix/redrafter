@@ -7,11 +7,24 @@
  * real Tauri commands, rather than speculating on the full contract here.
  */
 
-/** Mirrors `RefineOutcome` from src-tauri/src/orchestrator.rs. */
+/** Mirrors `RefineOutcome` from src-tauri/src/orchestrator.rs, widened
+ * (B6) with the optional `status` tag `RefineFlow` (B5) adds when the
+ * configured inject mode is `review` rather than `blind` — see
+ * `app/src/lib/ipc.ts`'s `RefineOutcome`. Leave unset for the Phase A
+ * blind-inject behavior. */
 export interface RefineFixture {
   original: string;
   refined: string;
   model: string;
+  status?: 'injected' | 'pending_review';
+}
+
+/** A generic (non-sentinel) `refine` failure — B6's error/retry state.
+ * Optionally carries the fallback-model chain the backend was configured
+ * to try, which the error state shows when present. */
+export interface RefineFailureFixture {
+  message: string;
+  fallbackModels?: string[];
 }
 
 export interface TestData {
@@ -73,6 +86,19 @@ export interface TestData {
    * permission-needed (A13) capture states.
    */
   refineError?: 'no_active_model' | 'permission_denied';
+  /**
+   * When set, the mocked `refine` command's *first* call rejects with this
+   * generic failure (B6's error/retry state) instead of resolving; every
+   * call after that (e.g. the user clicking `capture-retry`) resolves with
+   * `refineOutcome` instead — mirroring a fallback chain eventually
+   * succeeding on retry. Mutually exclusive with `refineError` (the two
+   * sentinel failure modes short-circuit before this is consulted). Set
+   * `refineFailureRepeats` to have every call fail instead of just the first.
+   */
+  refineFailure?: RefineFailureFixture;
+  /** When true, every `refine` call rejects with `refineFailure` (rather
+   * than just the first), for scenarios asserting a retry that fails again. */
+  refineFailureRepeats?: boolean;
 }
 
 export const DEFAULT_TEST_DATA: TestData = {

@@ -185,11 +185,20 @@ export function permissionOpenSettings(): Promise<void> {
 }
 
 // ── Refine pipeline + restore + tray (A9) ──
-/** Mirrors `RefineOutcome` from src-tauri/src/orchestrator.rs. */
+/**
+ * Mirrors `RefineOutcome` from src-tauri/src/orchestrator.rs, widened
+ * (B5/B6) with the optional `status` tag `RefineFlow` adds when the
+ * configured inject mode is `Review` rather than `Blind` — see
+ * `orchestrator.rs`'s `RefineFlow` (`#[serde(tag = "status", ...)]`). A plain
+ * Phase A response (no `status` field, always immediately injected) is
+ * unaffected: `status` is `undefined`, and callers treat that the same as
+ * `'injected'`.
+ */
 export interface RefineOutcome {
   original: string;
   refined: string;
   model: string;
+  status?: 'injected' | 'pending_review';
 }
 
 /**
@@ -202,11 +211,16 @@ export const NO_ACTIVE_MODEL_ERROR = 'no_active_model';
 export const PERMISSION_DENIED_ERROR = 'permission_denied';
 
 /**
- * Runs the default refine pipeline (A9/A5): captures the current selection,
- * calls the active model, and blind-injects the result in place, returning
- * the original (for restore), the refined text, and the model used. Rejects
- * with `NO_ACTIVE_MODEL_ERROR` or `PERMISSION_DENIED_ERROR` for those specific
- * failure modes (A11/A13); other failures reject with a generic message.
+ * Runs the refine pipeline (A9/A5, extended B5/B6): captures the current
+ * selection, calls the active model — retrying a configured fallback chain
+ * on failure — and either blind-injects the result in place or (when the
+ * configured inject mode is `Review`) leaves it pending the user's
+ * accept/edit/discard choice; see `RefineOutcome.status`. Resolves with the
+ * original (for restore), the refined text, and the model used either way.
+ * Rejects with `NO_ACTIVE_MODEL_ERROR` or `PERMISSION_DENIED_ERROR` for those
+ * specific failure modes (A11/A13); other failures reject with a generic
+ * message (optionally an object carrying a `fallbackModels` list — B6's
+ * error/retry state shows it when present) rather than injecting anything.
  */
 export function refine(): Promise<RefineOutcome> {
   return invoke('refine');
