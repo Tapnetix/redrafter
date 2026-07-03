@@ -145,6 +145,7 @@ export interface TestData {
    * placeholder (C4).
    */
   historyRerefineRefined?: string;
+  /**
    * Seeds the mocked preset store's user-saved rows (C3/C3b): each entry
    * upserts into the mock's user table exactly like a prior `preset_save`
    * call would, so `preset_list`/`preset_resolve` reflect it immediately —

@@ -506,6 +506,7 @@ export function getTauriMockScript(data: TestData): string {
             };
             state.history.unshift(newEntry);
             return newEntry;
+          }
           // ── Presets (C3/C3b): built-in + user store, used by Presets.tsx ──
           case 'preset_list':
             return presetListAll();

@@ -457,6 +457,8 @@ export interface HistoryReRefineArgs extends Record<string, unknown> {
  */
 export function historyReRefine(args: HistoryReRefineArgs): Promise<HistoryEntry> {
   return invoke<HistoryEntry>('history_rerefine', args);
+}
+
 // ── Presets (C3/C3b) ──
 /** A single before/after few-shot example, mirroring `presets.rs`'s
  * `PresetExample`. */
