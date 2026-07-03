@@ -1,0 +1,348 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import Connections from './Connections';
+import * as ipc from '@/lib/ipc';
+import type { Connection } from '@/lib/ipc';
+
+vi.mock('@/lib/ipc', () => ({
+  connectionList: vi.fn(),
+  connectionAdd: vi.fn(),
+  connectionEdit: vi.fn(),
+  connectionRemove: vi.fn(),
+  connectionTest: vi.fn(),
+  connectionRefreshModels: vi.fn(),
+  modelAddManual: vi.fn(),
+  secretsSet: vi.fn(),
+}));
+
+const mockedIpc = vi.mocked(ipc);
+
+function anthropicConnection(overrides: Partial<Connection> = {}): Connection {
+  return {
+    id: '1',
+    providerKind: 'anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    enabledModels: ['claude-opus-4-6'],
+    availableModels: [],
+    keyRef: '1',
+    ...overrides,
+  };
+}
+
+describe('Connections', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockedIpc.connectionList.mockResolvedValue([]);
+    mockedIpc.connectionTest.mockResolvedValue(undefined);
+    mockedIpc.secretsSet.mockResolvedValue(undefined);
+  });
+
+  it('shows the empty state with no connections and opens the add sheet from its CTA', async () => {
+    render(<Connections />);
+
+    await screen.findByTestId('connections-empty');
+    expect(screen.queryByTestId('connections-modal')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    expect(screen.getByTestId('connection-modal')).toBeVisible();
+    expect(screen.getByTestId('conn-provider-type')).toHaveValue('anthropic');
+  });
+
+  it('lists existing connections instead of the empty state', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+
+    render(<Connections />);
+
+    await screen.findByTestId('connection-row-anthropic');
+    expect(screen.queryByTestId('connections-empty')).not.toBeInTheDocument();
+  });
+
+  it('conn-test shows an ok chip on success and an error chip with the message on failure', async () => {
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.change(screen.getByTestId('conn-api-key'), { target: { value: 'sk-ant-test' } });
+    fireEvent.click(screen.getByTestId('conn-test'));
+
+    await waitFor(() => expect(screen.getByTestId('conn-test-ok')).toBeVisible());
+    expect(mockedIpc.connectionTest).toHaveBeenCalledWith({
+      providerKind: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'sk-ant-test',
+    });
+
+    mockedIpc.connectionTest.mockRejectedValue(new Error('bad key'));
+    fireEvent.click(screen.getByTestId('conn-test'));
+
+    await waitFor(() => expect(screen.getByTestId('conn-test-error')).toHaveTextContent('bad key'));
+  });
+
+  it('saving a new connection discovers models and enables the default one', async () => {
+    const added = anthropicConnection({ availableModels: [] });
+    mockedIpc.connectionAdd.mockResolvedValue(added);
+    mockedIpc.connectionRefreshModels.mockResolvedValue({
+      status: 'discovered',
+      connection: anthropicConnection({ availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'] }),
+    });
+
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.change(screen.getByTestId('conn-api-key'), { target: { value: 'sk-ant-test' } });
+    fireEvent.click(screen.getByTestId('connection-save'));
+
+    await waitFor(() =>
+      expect(mockedIpc.connectionAdd).toHaveBeenCalledWith({
+        providerKind: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: 'sk-ant-test',
+      }),
+    );
+    await waitFor(() => expect(mockedIpc.connectionRefreshModels).toHaveBeenCalledWith('1'));
+
+    const opusCheck = await screen.findByTestId('conn-model-check-claude-opus-4-6');
+    const sonnetCheck = screen.getByTestId('conn-model-check-claude-sonnet-4-6');
+    expect(opusCheck).toBeChecked();
+    expect(sonnetCheck).not.toBeChecked();
+  });
+
+  it('falls back to the manual model-id control when discovery requires manual entry', async () => {
+    mockedIpc.connectionAdd.mockResolvedValue(anthropicConnection({ availableModels: [] }));
+    mockedIpc.connectionRefreshModels.mockResolvedValue({
+      status: 'manual_required',
+      reason: 'provider returned no models',
+    });
+    mockedIpc.modelAddManual.mockResolvedValue(
+      anthropicConnection({ availableModels: ['my-model'], enabledModels: ['claude-opus-4-6', 'my-model'] }),
+    );
+
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+    fireEvent.change(screen.getByTestId('conn-api-key'), { target: { value: 'sk-ant-test' } });
+    fireEvent.click(screen.getByTestId('connection-save'));
+
+    await waitFor(() => expect(screen.getByTestId('conn-discovered-list')).toHaveTextContent(/no models could be listed/i));
+
+    fireEvent.change(screen.getByTestId('conn-add-model-manual'), { target: { value: 'my-model' } });
+    fireEvent.click(screen.getByTestId('conn-add-model-manual-add'));
+
+    await waitFor(() => expect(mockedIpc.modelAddManual).toHaveBeenCalledWith('1', 'my-model'));
+    await screen.findByTestId('conn-model-check-my-model');
+  });
+
+  it('toggling a discovered model checkbox calls connection_edit with the updated curation', async () => {
+    mockedIpc.connectionList.mockResolvedValue([
+      anthropicConnection({ availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'] }),
+    ]);
+    mockedIpc.connectionEdit.mockResolvedValue(
+      anthropicConnection({
+        availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+        enabledModels: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+      }),
+    );
+
+    render(<Connections />);
+    const row = await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+
+    const sonnetCheck = screen.getByTestId('conn-model-check-claude-sonnet-4-6');
+    expect(sonnetCheck).not.toBeChecked();
+    fireEvent.click(sonnetCheck);
+
+    await waitFor(() =>
+      expect(mockedIpc.connectionEdit).toHaveBeenCalledWith({
+        id: '1',
+        enabledModels: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+      }),
+    );
+    expect(row).toBeInTheDocument();
+  });
+
+  it('removing a connection asks for confirmation, then calls connection_remove', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    mockedIpc.connectionRemove.mockResolvedValue(undefined);
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+    fireEvent.click(screen.getByTestId('connection-remove'));
+
+    expect(screen.getByTestId('connection-remove-modal')).toBeVisible();
+    fireEvent.click(screen.getByTestId('connection-remove-confirm'));
+
+    await waitFor(() => expect(mockedIpc.connectionRemove).toHaveBeenCalledWith('1'));
+    await waitFor(() => expect(screen.queryByTestId('connection-row-anthropic')).not.toBeInTheDocument());
+  });
+
+  it('choosing a key-storage option calls secrets_set and marks it active', async () => {
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+
+    fireEvent.click(screen.getByTestId('key-storage-keychain'));
+
+    await waitFor(() => expect(mockedIpc.secretsSet).toHaveBeenCalledWith('keychain'));
+    expect(screen.getByTestId('key-storage-keychain')).toHaveClass('active');
+  });
+
+  it('the add-connection button in the header also opens the add sheet', async () => {
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+
+    fireEvent.click(screen.getByTestId('add-connection'));
+
+    expect(screen.getByTestId('connection-modal')).toBeVisible();
+  });
+
+  it('a row Test click calls connection_test with the row provider/base URL and reflects ok/error', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+
+    fireEvent.click(screen.getByTestId('connection-test-anthropic'));
+
+    await waitFor(() =>
+      expect(mockedIpc.connectionTest).toHaveBeenCalledWith({
+        providerKind: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: '',
+      }),
+    );
+
+    mockedIpc.connectionTest.mockRejectedValue(new Error('unreachable'));
+    fireEvent.click(screen.getByTestId('connection-test-anthropic'));
+
+    await waitFor(() => expect(screen.getByTestId('connection-row-anthropic')).toHaveTextContent('auth error'));
+  });
+
+  it('a row Refresh click updates the row with newly discovered models', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection({ availableModels: ['claude-opus-4-6'] })]);
+    mockedIpc.connectionRefreshModels.mockResolvedValue({
+      status: 'discovered',
+      connection: anthropicConnection({ availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'] }),
+    });
+
+    render(<Connections />);
+    const row = await screen.findByTestId('connection-row-anthropic');
+    expect(row).toHaveTextContent('1 models');
+
+    fireEvent.click(screen.getByTestId('connection-refresh-anthropic'));
+
+    await waitFor(() => expect(mockedIpc.connectionRefreshModels).toHaveBeenCalledWith('1'));
+    await waitFor(() => expect(row).toHaveTextContent('2 models'));
+  });
+
+  it('a row Refresh click that requires manual entry opens Edit with the manual-entry note', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection({ availableModels: [] })]);
+    mockedIpc.connectionRefreshModels.mockResolvedValue({
+      status: 'manual_required',
+      reason: 'provider returned no models',
+    });
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+
+    fireEvent.click(screen.getByTestId('connection-refresh-anthropic'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('conn-discovered-list')).toHaveTextContent(/no models could be listed/i),
+    );
+  });
+
+  it('the row switch disables a connection (clearing enabled models) and re-enables it from the last-known set', async () => {
+    const connection = anthropicConnection({ availableModels: ['claude-opus-4-6'] });
+    mockedIpc.connectionList.mockResolvedValue([connection]);
+    mockedIpc.connectionEdit
+      .mockResolvedValueOnce(anthropicConnection({ availableModels: ['claude-opus-4-6'], enabledModels: [] }))
+      .mockResolvedValueOnce(connection);
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+
+    fireEvent.click(screen.getByTestId('connection-enable-anthropic'));
+    await waitFor(() =>
+      expect(mockedIpc.connectionEdit).toHaveBeenNthCalledWith(1, { id: '1', enabledModels: [] }),
+    );
+
+    fireEvent.click(screen.getByTestId('connection-enable-anthropic'));
+    await waitFor(() =>
+      expect(mockedIpc.connectionEdit).toHaveBeenNthCalledWith(2, {
+        id: '1',
+        enabledModels: ['claude-opus-4-6'],
+      }),
+    );
+  });
+
+  it('starring a discovered model is a local, visual-only toggle', async () => {
+    mockedIpc.connectionList.mockResolvedValue([
+      anthropicConnection({ availableModels: ['claude-opus-4-6'] }),
+    ]);
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+
+    const star = screen.getByTestId('conn-model-star-claude-opus-4-6');
+    expect(star).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(star);
+
+    expect(star).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('cancelling the remove confirmation keeps the connection', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+    fireEvent.click(screen.getByTestId('connection-remove'));
+    fireEvent.click(screen.getByTestId('connection-remove-cancel'));
+
+    expect(screen.queryByTestId('connection-remove-modal')).not.toBeInTheDocument();
+    expect(mockedIpc.connectionRemove).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('connection-row-anthropic')).toBeInTheDocument();
+  });
+
+  it('changing the provider type on a fresh Add prefills that provider’s default base URL', async () => {
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.change(screen.getByTestId('conn-provider-type'), { target: { value: 'ollama' } });
+
+    expect(screen.getByTestId('conn-provider-type')).toHaveValue('ollama');
+    expect(screen.getByTestId('conn-base-url')).toHaveValue('http://localhost:11434');
+  });
+
+  it('cancelling the add sheet closes it without saving anything', async () => {
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.click(screen.getByTestId('connection-cancel'));
+
+    expect(screen.queryByTestId('connection-modal')).not.toBeInTheDocument();
+    expect(mockedIpc.connectionAdd).not.toHaveBeenCalled();
+  });
+
+  it('editing an existing connection saves base URL/key changes via connection_edit', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    mockedIpc.connectionEdit.mockResolvedValue(anthropicConnection({ baseUrl: 'https://proxy.example.com' }));
+
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+
+    fireEvent.change(screen.getByTestId('conn-base-url'), { target: { value: 'https://proxy.example.com' } });
+    fireEvent.click(screen.getByTestId('connection-save'));
+
+    await waitFor(() =>
+      expect(mockedIpc.connectionEdit).toHaveBeenCalledWith({ id: '1', baseUrl: 'https://proxy.example.com' }),
+    );
+  });
+});

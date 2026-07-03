@@ -24,6 +24,7 @@ import Onboarding from '@/screens/Onboarding';
 import FirstRun from '@/screens/FirstRun';
 import General from '@/screens/General';
 import Behavior from '@/screens/Behavior';
+import Connections from '@/screens/Connections';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
 import { applyTheme, loadTheme } from '@/lib/theme';
 
@@ -78,12 +79,14 @@ function ComingSoon({ section }: { section: Section }) {
   );
 }
 
-function SectionView({ section }: { section: Section }) {
+function SectionView({ section, onNavigate }: { section: Section; onNavigate: (section: Section) => void }) {
   switch (section) {
     case 'general':
       return <General />;
     case 'behavior':
       return <Behavior />;
+    case 'connections':
+      return <Connections onNavigateToModels={() => onNavigate('models')} />;
     default:
       return <ComingSoon section={section} />;
   }
@@ -133,7 +136,7 @@ export default function App() {
           <h1 className="topbar__title">{SECTION_TITLES[section]}</h1>
         </header>
         <div className="content" style={{ padding: 0 }}>
-          <SectionView section={section} />
+          <SectionView section={section} onNavigate={setSection} />
         </div>
       </main>
     </div>

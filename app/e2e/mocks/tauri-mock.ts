@@ -32,7 +32,34 @@ export function getTauriMockScript(data: TestData): string {
         // Mirrors the orchestrator's restore buffer (A9): the original text
         // from the most recent successful \`refine\`, for \`restore_original\`.
         lastOriginal: null,
+        // Stateful connection store (B7): seeded from TEST_DATA.connections,
+        // mutated in place by connection_add/edit/remove/refresh_models/
+        // model_add_manual so a spec can add a connection then immediately
+        // edit/refresh/remove it by the id the mock handed back.
+        connections: (TEST_DATA.connections || []).map((c) =>
+          Object.assign({ availableModels: [], keyRef: null }, c),
+        ),
+        nextConnectionId: (TEST_DATA.connections || []).length + 1,
       };
+
+      function findConnection(id) {
+        return state.connections.find((c) => c.id === id);
+      }
+
+      // A real Tauri IPC round-trip serializes to/from JSON, so the
+      // frontend never sees the exact same object reference the backend
+      // holds. The mock calls handlers directly in-process (no
+      // serialization), so it must clone before returning a connection --
+      // otherwise a later mutation (e.g. connection_refresh_models filling
+      // in availableModels) would silently rewrite an object a screen has
+      // already put in React state, without a new reference to trigger a
+      // re-render.
+      function cloneConnection(connection) {
+        return Object.assign({}, connection, {
+          enabledModels: connection.enabledModels.slice(),
+          availableModels: connection.availableModels.slice(),
+        });
+      }
 
       // Log of every invoked command, exposed on window so specs can assert
       // which backend commands fired (and with what args) without a real
@@ -75,20 +102,100 @@ export function getTauriMockScript(data: TestData): string {
             return null;
           }
 
-          // ── Connections (A7), used by FirstRun ──
-          case 'connection_add':
-            return (
-              TEST_DATA.connectionAdd ?? {
-                id: '1',
-                providerKind: args && args.providerKind,
-                baseUrl: args && args.baseUrl,
-                enabledModels: ['default'],
-              }
-            );
+          // ── Connections (A7/B7b), used by FirstRun + Connections ──
+          case 'connection_add': {
+            if (TEST_DATA.connectionAdd) {
+              const added = Object.assign({ availableModels: [], keyRef: null }, TEST_DATA.connectionAdd);
+              state.connections.push(added);
+              return cloneConnection(added);
+            }
+            const id = String(state.nextConnectionId++);
+            const providerKind = args && args.providerKind;
+            const baseUrl = args && args.baseUrl;
+            const apiKey = args && args.apiKey;
+            // Mirrors the real backend's connect_and_store: enables the
+            // first discovered model by default (falling back to 'default'
+            // when discovery isn't seeded), but leaves availableModels
+            // empty until an explicit connection_refresh_models call.
+            const defaultModel =
+              TEST_DATA.discoverModels && TEST_DATA.discoverModels.length > 0
+                ? TEST_DATA.discoverModels[0]
+                : 'default';
+            const added = {
+              id,
+              providerKind,
+              baseUrl,
+              enabledModels: [defaultModel],
+              availableModels: [],
+              keyRef: apiKey ? id : null,
+            };
+            state.connections.push(added);
+            return cloneConnection(added);
+          }
           // Boot-time list read (App.tsx/Sidebar.tsx, A14): defaults to \`[]\`
           // so an unset fixture reads as "no connected provider yet".
           case 'connection_list':
-            return TEST_DATA.connections ?? [];
+            return state.connections.map(cloneConnection);
+          case 'connection_edit': {
+            const id = args && args.id;
+            const existing = findConnection(id);
+            if (!existing) throw \`no connection with id \${id}\`;
+            if (args && Object.prototype.hasOwnProperty.call(args, 'baseUrl') && args.baseUrl !== undefined) {
+              existing.baseUrl = args.baseUrl;
+            }
+            if (args && Object.prototype.hasOwnProperty.call(args, 'apiKey') && args.apiKey !== undefined) {
+              existing.keyRef = args.apiKey ? id : null;
+            }
+            if (
+              args &&
+              Object.prototype.hasOwnProperty.call(args, 'enabledModels') &&
+              args.enabledModels !== undefined
+            ) {
+              existing.enabledModels = args.enabledModels;
+            }
+            return cloneConnection(existing);
+          }
+          case 'connection_remove': {
+            const id = args && args.id;
+            state.connections = state.connections.filter((c) => c.id !== id);
+            return null;
+          }
+          case 'connection_test': {
+            if (TEST_DATA.testConnectionError) {
+              throw TEST_DATA.testConnectionError;
+            }
+            return null;
+          }
+          case 'connection_refresh_models': {
+            const id = args && args.id;
+            const existing = findConnection(id);
+            if (!existing) throw \`no connection with id \${id}\`;
+            if (TEST_DATA.manualEntryRequired) {
+              throw TEST_DATA.manualEntryRequired;
+            }
+            existing.availableModels = TEST_DATA.discoverModels ?? [];
+            return cloneConnection(existing);
+          }
+          case 'model_add_manual': {
+            const id = args && args.id;
+            const modelId = args && args.modelId && args.modelId.trim();
+            if (!modelId) {
+              throw 'model id must not be empty';
+            }
+            const existing = findConnection(id);
+            if (!existing) throw \`no connection with id \${id}\`;
+            if (existing.availableModels.indexOf(modelId) === -1) {
+              existing.availableModels = existing.availableModels.concat([modelId]);
+            }
+            if (existing.enabledModels.indexOf(modelId) === -1) {
+              existing.enabledModels = existing.enabledModels.concat([modelId]);
+            }
+            return cloneConnection(existing);
+          }
+
+          // ── Key storage (B10, backend TBD) ──
+          case 'secrets_set':
+            return null;
 
           // ── Default refine pipeline (A9): capture -> prompt -> model ->
           // inject, all in one backend call. Errors drive the no-active-model
