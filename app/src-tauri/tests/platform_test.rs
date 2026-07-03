@@ -85,6 +85,15 @@ fn platform_hotkey_set_registers_the_default_combo_through_the_real_plugin_backe
     );
 }
 
+// Exercises the REAL global-shortcut plugin backend for a second time (an
+// initial bind, then a rebind) -- same headless-CI-Mac caveat as
+// `platform_hotkey_set_registers_the_default_combo_through_the_real_plugin_backend`
+// above: real macOS global-shortcut registration needs a running app/main-
+// thread session, which a headless CI Mac agent doesn't have, so the rebind
+// doesn't reliably persist and the assertion below flakes/fails there.
+// Covered instead by D4's real-surface pass (e2e-real). Linux CI still
+// exercises the real backend.
+#[cfg_attr(target_os = "macos", ignore = "real macOS global-shortcut registration needs a running app/main thread; covered by D4 real-surface")]
 #[test]
 fn platform_hotkey_set_persists_a_rebind_so_it_survives_a_restart() {
     let app = hotkey_test_app();
