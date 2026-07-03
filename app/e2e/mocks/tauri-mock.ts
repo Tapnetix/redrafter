@@ -425,6 +425,19 @@ export function getTauriMockScript(data: TestData): string {
             state.history.unshift(newEntry);
             return newEntry;
           }
+          // ── History copy/clear (C12/C15): looking up an entry for the
+          // frontend to write to the clipboard, and emptying the store for
+          // the clear-all confirmation. ──
+          case 'history_copy': {
+            const id = args && args.id;
+            const entry = state.history.find((h) => h.id === id);
+            if (!entry) throw \`no history entry with id \${id}\`;
+            return entry;
+          }
+          case 'history_clear': {
+            state.history = [];
+            return null;
+          }
 
           default:
             console.warn('[tauri-mock] Unhandled command:', cmd, args);

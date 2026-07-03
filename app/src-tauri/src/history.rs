@@ -5,14 +5,15 @@
 // re-refine past results. Same SQLite-backed pattern as `connections.rs`/
 // `settings.rs`.
 //
-// C4 (this file) is the sole owner of the store itself plus
-// `history_list`/`history_get`/`history_restore`/`history_rerefine` and the
-// `append` fn every successful refine should call. C17 is the one that
-// actually calls `append` from `lib.rs`'s `execute_refine` (so every real
-// refine gets recorded) and registers these commands in the invoke handler/
-// ACL — until then they compile but aren't reachable from the frontend.
-// C12-C15 build the remaining History screen affordances (search, detail
-// view, copy, clear) on top of what's here.
+// C4 built the store itself plus `history_list`/`history_get`/
+// `history_restore`/`history_rerefine` and the `append` fn every successful
+// refine should call. C12-C15 (this file's remaining commands) add
+// `history_copy`/`history_clear`, backing the History screen's copy and
+// clear-all controls (search and the detail view reuse the already-loaded
+// list, no new commands needed). C17 is the one that actually calls
+// `append` from `lib.rs`'s `execute_refine` (so every real refine gets
+// recorded) and registers every command here in the invoke handler/ACL —
+// until then they compile but aren't reachable from the frontend.
 
 use anyhow::Result;
 use rusqlite::{Connection as SqliteConnection, OptionalExtension};
@@ -162,6 +163,15 @@ impl HistoryStore {
         .map_err(Into::into)
     }
 
+    /// Deletes every recorded entry. Backs the History screen's clear-all
+    /// control (C12-C15) — irreversible, so the frontend gates this behind
+    /// a confirmation dialog before calling it.
+    pub fn clear(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM history", [])?;
+        Ok(())
+    }
+
     fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
         let id: i64 = row.get(0)?;
         Ok(HistoryEntry {
@@ -221,6 +231,41 @@ pub fn history_get(
     id: String,
 ) -> Result<HistoryEntry, String> {
     history_get_impl(&state, &id)
+}
+
+/// The plain logic behind the `history_copy` command: looks a past entry up
+/// so the frontend can write its refined text to the OS clipboard (via the
+/// browser Clipboard API) after a successful call. Identical lookup to
+/// [`history_get_impl`], but kept as its own named entry point since it
+/// backs a distinct control (`history-copy`/`history-detail-copy`, C12) with
+/// its own `controls/history.json` contract.
+pub fn history_copy_impl(store: &HistoryStore, id: &str) -> Result<HistoryEntry, String> {
+    store
+        .get(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no history entry with id {id}"))
+}
+
+/// Tauri command: looks up the entry the History screen's copy control
+/// (`history-copy`/`history-detail-copy`) is copying, for the frontend to
+/// write to the clipboard.
+#[tauri::command]
+pub fn history_copy(state: tauri::State<'_, HistoryStore>, id: String) -> Result<HistoryEntry, String> {
+    history_copy_impl(&state, &id)
+}
+
+/// The plain logic behind the `history_clear` command: empties the store.
+/// Kept `&HistoryStore`-generic (mirrors `history_get_impl`) so it's
+/// unit-testable without a `tauri::State` harness.
+pub fn history_clear_impl(store: &HistoryStore) -> Result<(), String> {
+    store.clear().map_err(|e| e.to_string())
+}
+
+/// Tauri command: deletes every recorded history entry (the History
+/// screen's clear-all control, `history-clear-confirm`, C15).
+#[tauri::command]
+pub fn history_clear(state: tauri::State<'_, HistoryStore>) -> Result<(), String> {
+    history_clear_impl(&state)
 }
 
 /// Restores a past entry's *original* text: looks it up and injects it back
@@ -600,6 +645,56 @@ mod tests {
         assert!(injector.injected().is_empty());
         // No new entry was recorded -- only the original is still there.
         assert_eq!(store.list().unwrap(), vec![entry]);
+    }
+
+    // ── HistoryStore::clear / history_clear_impl ──
+
+    #[test]
+    fn clear_empties_a_populated_store() {
+        let store = new_store();
+        store.append("original one", "refined one", "gpt-5.1", None).unwrap();
+        store.append("original two", "refined two", "gpt-5.1", None).unwrap();
+        assert_eq!(store.list().unwrap().len(), 2);
+
+        store.clear().unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn clear_is_a_no_op_on_an_already_empty_store() {
+        let store = new_store();
+
+        store.clear().unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn history_clear_impl_empties_the_store() {
+        let store = new_store();
+        store.append("original", "refined", "gpt-5.1", None).unwrap();
+
+        history_clear_impl(&store).unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![]);
+    }
+
+    // ── history_copy_impl ──
+
+    #[test]
+    fn history_copy_impl_returns_the_full_entry() {
+        let store = new_store();
+        let added = store.append("original", "refined", "gpt-5.1", None).unwrap();
+
+        assert_eq!(history_copy_impl(&store, &added.id).unwrap(), added);
+    }
+
+    #[test]
+    fn history_copy_impl_errors_for_an_unknown_id() {
+        let store = new_store();
+        let err = history_copy_impl(&store, "999").unwrap_err();
+        assert!(err.contains("999"), "got: {err}");
     }
 
     // ── resolve_connection_for_model ──

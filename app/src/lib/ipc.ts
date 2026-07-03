@@ -458,3 +458,22 @@ export interface HistoryReRefineArgs extends Record<string, unknown> {
 export function historyReRefine(args: HistoryReRefineArgs): Promise<HistoryEntry> {
   return invoke<HistoryEntry>('history_rerefine', args);
 }
+
+/**
+ * Looks up a past entry so its refined text can be written to the OS
+ * clipboard (the caller does the actual `navigator.clipboard.writeText`,
+ * mirroring the History screen's copy control, `history-copy`/
+ * `history-detail-copy`, C12). Backed by the `history_copy` Tauri command.
+ */
+export function historyCopy(id: string): Promise<HistoryEntry> {
+  return invoke<HistoryEntry>('history_copy', { id });
+}
+
+/**
+ * Deletes every recorded history entry (the History screen's clear-all
+ * control, `history-clear-confirm`, C15) — irreversible, hence the
+ * confirmation dialog gating this call. Backed by `history_clear`.
+ */
+export function historyClear(): Promise<void> {
+  return invoke('history_clear');
+}

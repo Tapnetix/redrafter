@@ -26,6 +26,8 @@ import {
   cancelRefine,
   trayRefine,
   trayQuit,
+  historyCopy,
+  historyClear,
 } from './ipc';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -309,5 +311,26 @@ describe('ipc', () => {
 
     await trayQuit();
     expect(mockedInvoke).toHaveBeenCalledWith('tray_quit');
+  });
+
+  it('historyCopy invokes history_copy with the id and resolves the entry', async () => {
+    const entry = {
+      id: '1',
+      original: 'rough draft',
+      refined: 'polished draft',
+      model: 'claude-opus-4-6',
+      createdAt: 1_700_000_000_000,
+    };
+    mockedInvoke.mockResolvedValue(entry);
+
+    await expect(historyCopy('1')).resolves.toEqual(entry);
+    expect(mockedInvoke).toHaveBeenCalledWith('history_copy', { id: '1' });
+  });
+
+  it('historyClear invokes history_clear with no args', async () => {
+    mockedInvoke.mockResolvedValue(undefined);
+
+    await historyClear();
+    expect(mockedInvoke).toHaveBeenCalledWith('history_clear');
   });
 });
