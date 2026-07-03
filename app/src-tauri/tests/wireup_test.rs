@@ -143,7 +143,28 @@ fn is_unregistered_rejection(value: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
+// Every test below that calls `build_test_app()` needs a real
+// `tauri::AppHandle`, which means building an app via
+// `tauri::test::mock_builder().build(tauri::generate_context!())` -- the
+// same call production `run()` makes. `tauri.conf.json`'s `app.trayIcon`
+// block means that `build()` initializes the tray-icon plugin, which
+// requires the main thread; on real macOS (not reproducible on Linux) a
+// test harness that runs tests off the main thread hits
+// `Tray(NotMainThread)` there. Ignored on macOS rather than reworked: this
+// file's whole point is exercising the *real* `invoke_handler()`/ACL wiring
+// end-to-end (registration + grant, not a unit of command logic), so unlike
+// `src/lib.rs`/`src/connections.rs`/`src/secrets.rs`/`src/tray.rs`'s own
+// `#[cfg(test)]` units (which were rewritten to test inner functions
+// directly against in-memory stores, no app needed), there's no
+// app-free-but-equivalent way to assert "the production invoke handler
+// actually has this command wired up" -- that assertion is definitionally
+// about the built app. Treated as a Linux-CI-only check; the wiring itself
+// is verified once per phase on Linux, and the mock-app-free unit suite
+// (which does need to be green on both platforms) covers the command
+// bodies.
+
 #[test]
+#[cfg_attr(target_os = "macos", ignore)]
 fn every_expected_command_is_registered() {
     let app = build_test_app();
     let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -237,6 +258,7 @@ fn acl_command_grants_match_expected_commands_exactly() {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore)]
 fn an_unregistered_command_name_is_rejected_as_not_found() {
     // Sanity check for `is_unregistered_rejection` itself: a command that
     // was never registered anywhere must be rejected with "not found", so
@@ -252,6 +274,7 @@ fn an_unregistered_command_name_is_rejected_as_not_found() {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore)]
 fn tray_quit_exits_the_app_process() {
     // `tray_quit` calls `AppHandle::exit`, which under `MockRuntime` just
     // records the exit request rather than terminating the test process —

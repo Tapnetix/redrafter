@@ -551,13 +551,23 @@ mod tests {
 
     /// Builds a `MockRuntime` app with every store `run_refine` (transitively
     /// reached by `tray_refine`/`handle_menu_event`'s "refine" branch) needs
-    /// managed, exactly like `tests/wireup_test.rs`'s `build_test_app`. No
-    /// real window/tray backend — `tray_icon` is always `None` under
-    /// `mock_builder`, which is exactly the "tray icon not found" fallback
+    /// managed, exactly like `tests/wireup_test.rs`'s `build_test_app` --
+    /// except through `tauri::test::mock_context`/`noop_assets` (a bare,
+    /// no-window/no-tray dummy config, `tray_icon: None`) rather than
+    /// `tauri::generate_context!()` (this project's real `tauri.conf.json`,
+    /// whose `app.trayIcon` block `App::build` initializes eagerly, even
+    /// under `MockRuntime` -- the tray-icon crate's own init needs the main
+    /// thread, so that combination errors with `Tray(NotMainThread)` under a
+    /// test harness that runs tests off it on real macOS). With no
+    /// `tray_icon` configured at all, `App::build` never attempts that init
+    /// on any platform, while every assertion below still exercises the
+    /// exact same command/dispatch code as before -- `tray_by_id("main")` is
+    /// `None` under `MockRuntime` either way (no real tray backend exists in
+    /// tests), which is exactly the "tray icon not found" fallback
     /// `setup_tray`/`refresh_tray` are built to handle.
     fn managed_app() -> tauri::App<tauri::test::MockRuntime> {
         let app = tauri::test::mock_builder()
-            .build(tauri::generate_context!())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("failed to build mock app");
         app.manage(SettingsStore::open_in_memory().expect("failed to open in-memory settings"));
         app.manage(ConnectionStore::open_in_memory().expect("failed to open in-memory connections"));
@@ -579,12 +589,13 @@ mod tests {
     #[test]
     fn handle_menu_event_quits_on_the_quit_id() {
         // `AppHandle::exit` -> `request_exit` is `unimplemented!()` under
-        // `MockRuntime` (there's no real event loop to deliver
-        // `RunEvent::Exit` to) — genuinely untestable platform glue, same as
-        // `setup_tray`'s native menu construction. `catch_unwind` still lets
-        // this assert the "quit" arm actually reaches and calls `exit`
-        // (the panic happens one level down, inside tauri's `AppHandle::exit`,
-        // not before it), without crashing the test process.
+        // `MockRuntime` regardless of context (there's no real event loop to
+        // deliver `RunEvent::Exit` to) — genuinely untestable platform glue,
+        // same as `setup_tray`'s native menu construction. `catch_unwind`
+        // still lets this assert the "quit" arm actually reaches and calls
+        // `exit` (the panic happens one level down, inside tauri's
+        // `AppHandle::exit`, not before it), without crashing the test
+        // process.
         let app = managed_app();
         let handle = app.handle().clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -613,6 +624,59 @@ mod tests {
         // `set_paused`/`model_set_active_impl`'s own tests, since applying
         // them here would panic building a native menu under `MockRuntime`.)
         handle_menu_event(&app.handle().clone(), "refine");
+    }
+
+    #[tokio::test]
+    async fn tray_refine_propagates_the_pipeline_result() {
+        let app = managed_app();
+        // No stored connection with an enabled model -> `run_refine` rejects
+        // with `NO_ACTIVE_MODEL_ERROR` before ever touching the network.
+        let result = tray_refine(app.handle().clone()).await;
+        assert_eq!(result, Err(crate::NO_ACTIVE_MODEL_ERROR.to_string()));
+    }
+
+    #[test]
+    fn tray_quit_exits_the_app() {
+        // See `handle_menu_event_quits_on_the_quit_id` above: `AppHandle::exit`
+        // is unimplemented under `MockRuntime`, so this only asserts the
+        // command actually reaches and calls it.
+        let app = managed_app();
+        let handle = app.handle().clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tray_quit(handle);
+        }));
+        assert!(result.is_err(), "expected tray_quit to call AppHandle::exit");
+    }
+
+    // ---- tray_set_active_model ----
+    //
+    // `tray_set_active_model`/`tray_pause`/`tray_resume`'s *happy* paths all
+    // end in `refresh_tray`, which builds a native GTK menu that panics
+    // under `MockRuntime` on Linux (the known tray SIGSEGV) — so those are
+    // untestable glue here (their state effect is covered by
+    // `model_set_active_impl`/`set_paused`'s own tests, and end-to-end by
+    // the `tray_set_active_model`/`tray_pause`/`tray_resume` e2e specs).
+    // The *rejection* path below returns before `refresh_tray`, so it stays
+    // unit-testable.
+
+    #[test]
+    fn tray_set_active_model_rejects_a_model_that_isnt_enabled() {
+        let app = managed_app();
+        let connections = app.state::<ConnectionStore>();
+        let added = connections
+            .add("anthropic", "https://api.anthropic.com", Some("sk"), &[])
+            .unwrap();
+
+        let err = tray_set_active_model(
+            app.handle().clone(),
+            app.state(),
+            app.state(),
+            added.id,
+            "claude-opus-4-6".to_string(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("not enabled"), "got: {err}");
     }
 
     // ── tray_model_rows / tray_active_model_label (pure ordering, GTK-free) ──
@@ -772,59 +836,6 @@ mod tests {
     fn parse_model_menu_id_rejects_a_non_model_id() {
         assert_eq!(parse_model_menu_id("refine"), None);
         assert_eq!(parse_model_menu_id("quit"), None);
-    }
-
-    #[tokio::test]
-    async fn tray_refine_propagates_the_pipeline_result() {
-        let app = managed_app();
-        // No stored connection with an enabled model -> `run_refine` rejects
-        // with `NO_ACTIVE_MODEL_ERROR` before ever touching the network.
-        let result = tray_refine(app.handle().clone()).await;
-        assert_eq!(result, Err(crate::NO_ACTIVE_MODEL_ERROR.to_string()));
-    }
-
-    #[test]
-    fn tray_quit_exits_the_app() {
-        // See `handle_menu_event_quits_on_the_quit_id` above: `AppHandle::exit`
-        // is unimplemented under `MockRuntime`, so this only asserts the
-        // command actually reaches and calls it.
-        let app = managed_app();
-        let handle = app.handle().clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tray_quit(handle);
-        }));
-        assert!(result.is_err(), "expected tray_quit to call AppHandle::exit");
-    }
-
-    // ---- tray_set_active_model ----
-    //
-    // `tray_set_active_model`/`tray_pause`/`tray_resume`'s *happy* paths all
-    // end in `refresh_tray`, which builds a native GTK menu that panics
-    // under `MockRuntime` on Linux (the known tray SIGSEGV) — so those are
-    // untestable glue here (their state effect is covered by
-    // `model_set_active_impl`/`set_paused`'s own tests, and end-to-end by
-    // the `tray_set_active_model`/`tray_pause`/`tray_resume` e2e specs).
-    // The *rejection* path below returns before `refresh_tray`, so it stays
-    // unit-testable.
-
-    #[test]
-    fn tray_set_active_model_rejects_a_model_that_isnt_enabled() {
-        let app = managed_app();
-        let connections = app.state::<ConnectionStore>();
-        let added = connections
-            .add("anthropic", "https://api.anthropic.com", Some("sk"), &[])
-            .unwrap();
-
-        let err = tray_set_active_model(
-            app.handle().clone(),
-            app.state(),
-            app.state(),
-            added.id,
-            "claude-opus-4-6".to_string(),
-        )
-        .unwrap_err();
-
-        assert!(err.contains("not enabled"), "got: {err}");
     }
 
     // ---- check_updates_result ----

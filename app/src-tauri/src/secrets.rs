@@ -433,9 +433,18 @@ pub fn set_storage_backend(
     Ok(())
 }
 
-/// Tauri command: stores `key` for `connection_id` through whichever
-/// backend is currently active. Never echoes the key back -- the frontend
-/// gets an `Ok(())`/error, nothing else (see module docs).
+/// Stores `key` for `connection_id` through whichever backend is currently
+/// active. The plain logic behind the `secrets_set_key` command, taking
+/// `&SecretStore` directly (rather than `tauri::State`) so it's
+/// unit-testable without a built `tauri::App` (a real app build initializes
+/// the tray-icon plugin, which requires the main thread).
+pub fn secrets_set_key_impl(store: &SecretStore, connection_id: &str, key: &str) -> Result<()> {
+    store.set(connection_id, key)
+}
+
+/// Tauri command wrapping [`secrets_set_key_impl`]. Never echoes the key
+/// back -- the frontend gets an `Ok(())`/error, nothing else (see module
+/// docs).
 ///
 /// Registered as `secrets_set_key` (not `secrets_set` -- see the module
 /// docs' "The `secrets_set` name" section for why).
@@ -448,11 +457,18 @@ pub fn secrets_set_key(
     connection_id: String,
     key: String,
 ) -> Result<(), String> {
-    state.set(&connection_id, &key).map_err(|e| e.to_string())
+    secrets_set_key_impl(&state, &connection_id, &key).map_err(|e| e.to_string())
 }
 
-/// Tauri command: deletes the stored key for `connection_id`, if any
-/// (idempotent -- succeeds even if none was stored).
+/// Deletes the stored key for `connection_id`, if any (idempotent --
+/// succeeds even if none was stored). The plain logic behind the
+/// `secrets_delete` command, mirroring [`secrets_set_key_impl`]'s
+/// app-free-testability reason.
+pub fn secrets_delete_impl(store: &SecretStore, connection_id: &str) -> Result<()> {
+    store.delete(connection_id)
+}
+
+/// Tauri command wrapping [`secrets_delete_impl`].
 // orphan-ok: forward-reference for Phase C connection key-cleanup; keys are
 // currently cleared via connection_remove's mirroring into SecretStore.
 #[tauri::command]
@@ -460,7 +476,7 @@ pub fn secrets_delete(
     state: tauri::State<'_, SecretStore>,
     connection_id: String,
 ) -> Result<(), String> {
-    state.delete(&connection_id).map_err(|e| e.to_string())
+    secrets_delete_impl(&state, &connection_id).map_err(|e| e.to_string())
 }
 
 /// Tauri command: selects which backend (`"encrypted_file"`/`"keychain"`)
@@ -490,7 +506,6 @@ pub fn secrets_get(store: &SecretStore, connection_id: &str) -> Result<Option<St
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
-    use tauri::Manager;
 
     /// Minimal RAII temp-dir guard (mirrors `connections.rs`'s
     /// `TempDbPath`): a process- and test-unique directory under the OS
@@ -762,59 +777,46 @@ mod tests {
 
     // ── secrets_set_key / secrets_delete / secrets_set commands (B23) ──
     //
-    // Built through a real (if minimal) `MockRuntime` app rather than
-    // constructing `tauri::State` by hand -- `State`'s inner reference is
-    // private to the `tauri` crate, so a managed app is the only way to get
-    // one from outside it (mirrors `tray.rs`'s `managed_app` pattern).
-
-    fn managed_app_with_secret_store(dir: &Path) -> tauri::App<tauri::test::MockRuntime> {
-        let app = tauri::test::mock_builder()
-            .build(tauri::generate_context!())
-            .expect("failed to build mock app");
-        app.manage(SecretStore::open(dir).expect("failed to open secret store"));
-        app.manage(SettingsStore::open_in_memory().expect("failed to open in-memory settings"));
-        app
-    }
+    // Each command's full logic (`secrets_set_key_impl`/`secrets_delete_impl`/
+    // `set_storage_backend`) is exercised directly against a
+    // directly-constructed `SecretStore`/`SettingsStore` -- no `tauri::App`/
+    // `State` needed (a real app build initializes the tray-icon plugin,
+    // which requires the main thread).
 
     #[test]
-    fn secrets_set_key_command_persists_through_the_active_backend() {
+    fn secrets_set_key_impl_persists_through_the_active_backend() {
         let dir = TempDir::new("cmd-set-key");
-        let app = managed_app_with_secret_store(&dir.0);
+        let store = SecretStore::open(&dir.0).unwrap();
 
-        secrets_set_key(app.state(), "conn-1".to_string(), "sk-cmd".to_string()).unwrap();
+        secrets_set_key_impl(&store, "conn-1", "sk-cmd").unwrap();
 
-        assert_eq!(
-            app.state::<SecretStore>().get("conn-1").unwrap(),
-            Some("sk-cmd".to_string())
-        );
+        assert_eq!(store.get("conn-1").unwrap(), Some("sk-cmd".to_string()));
     }
 
     #[test]
-    fn secrets_delete_command_removes_the_key() {
+    fn secrets_delete_impl_removes_the_key() {
         let dir = TempDir::new("cmd-delete");
-        let app = managed_app_with_secret_store(&dir.0);
-        app.state::<SecretStore>().set("conn-1", "sk-cmd").unwrap();
+        let store = SecretStore::open(&dir.0).unwrap();
+        store.set("conn-1", "sk-cmd").unwrap();
 
-        secrets_delete(app.state(), "conn-1".to_string()).unwrap();
+        secrets_delete_impl(&store, "conn-1").unwrap();
 
-        assert_eq!(app.state::<SecretStore>().get("conn-1").unwrap(), None);
+        assert_eq!(store.get("conn-1").unwrap(), None);
     }
 
     #[test]
-    fn secrets_set_command_switches_the_storage_backend_and_persists_the_choice() {
+    fn secrets_set_commands_backend_switch_persists_the_choice() {
         let dir = TempDir::new("cmd-set-backend");
-        let app = managed_app_with_secret_store(&dir.0);
+        let store = SecretStore::open(&dir.0).unwrap();
+        let settings = SettingsStore::open_in_memory().unwrap();
 
-        secrets_set(app.state(), app.state(), "keychain".to_string()).unwrap();
+        // Mirrors `secrets_set`'s one-line body: parse the frontend's
+        // `location` string, then apply/persist it.
+        set_storage_backend(&store, &settings, StorageBackend::parse("keychain")).unwrap();
 
+        assert_eq!(store.storage_backend(), StorageBackend::Keychain);
         assert_eq!(
-            app.state::<SecretStore>().storage_backend(),
-            StorageBackend::Keychain
-        );
-        assert_eq!(
-            app.state::<SettingsStore>()
-                .get(STORAGE_BACKEND_SETTING_KEY)
-                .unwrap(),
+            settings.get(STORAGE_BACKEND_SETTING_KEY).unwrap(),
             Some("keychain".to_string())
         );
     }

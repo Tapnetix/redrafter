@@ -481,11 +481,32 @@ pub fn connection_edit_impl(
     store.edit(id, base_url, api_key, enabled_models)
 }
 
-/// Tauri command wrapping [`connection_edit_impl`]. `api_key: None` means
-/// "leave the key unchanged"; `Some(String::new())` clears it. Whenever the
-/// key does change, mirrors the new value (or its absence) into secure
-/// storage too (B23 -- see [`mirror_api_key`]), keeping it in sync with the
-/// plaintext DB column `connection_edit_impl` writes.
+/// Edits a connection (via [`connection_edit_impl`]) and, whenever the key
+/// actually changed, mirrors the new value into secure storage too (B23 --
+/// see [`mirror_api_key`]), keeping it in sync with the plaintext DB column
+/// `connection_edit_impl` writes. `api_key: None` means "leave the key
+/// unchanged"; `Some(None)` clears it.
+///
+/// The full logic behind the `connection_edit` command, taking `&SecretStore`
+/// directly (rather than `tauri::State`) so it's unit-testable with a
+/// directly-constructed store instead of a built `tauri::App` (a real app
+/// build initializes the tray-icon plugin, which requires the main thread).
+pub fn connection_edit_and_mirror_impl(
+    store: &ConnectionStore,
+    secrets: &SecretStore,
+    id: &str,
+    base_url: Option<&str>,
+    api_key: Option<Option<&str>>,
+    enabled_models: Option<&[String]>,
+) -> Result<Connection> {
+    let connection = connection_edit_impl(store, id, base_url, api_key, enabled_models)?;
+    if let Some(key) = api_key {
+        mirror_api_key(secrets, id, key);
+    }
+    Ok(connection)
+}
+
+/// Tauri command wrapping [`connection_edit_and_mirror_impl`].
 #[tauri::command]
 pub fn connection_edit(
     state: tauri::State<'_, ConnectionStore>,
@@ -495,18 +516,15 @@ pub fn connection_edit(
     api_key: Option<String>,
     enabled_models: Option<Vec<String>>,
 ) -> Result<Connection, String> {
-    let connection = connection_edit_impl(
+    connection_edit_and_mirror_impl(
         &state,
+        &secrets,
         &id,
         base_url.as_deref(),
         api_key.as_deref().map(Some),
         enabled_models.as_deref(),
     )
-    .map_err(|e| e.to_string())?;
-    if let Some(ref key) = api_key {
-        mirror_api_key(&secrets, &id, Some(key.as_str()));
-    }
-    Ok(connection)
+    .map_err(|e| e.to_string())
 }
 
 /// Deletes a connection, detaching whatever enabled/available models it
@@ -516,18 +534,29 @@ pub fn connection_remove_impl(store: &ConnectionStore, id: &str) -> Result<()> {
     store.remove(id)
 }
 
-/// Tauri command wrapping [`connection_remove_impl`]. Also clears the
-/// connection's secure-storage key, if any (B23), so a removed connection
-/// doesn't leave an orphaned secret behind.
+/// Removes a connection (via [`connection_remove_impl`]) and also clears its
+/// secure-storage key, if any (B23), so a removed connection doesn't leave
+/// an orphaned secret behind. The full logic behind the `connection_remove`
+/// command, taking `&SecretStore` directly for the same app-free-testability
+/// reason as [`connection_edit_and_mirror_impl`].
+pub fn connection_remove_and_clear_impl(
+    store: &ConnectionStore,
+    secrets: &SecretStore,
+    id: &str,
+) -> Result<()> {
+    connection_remove_impl(store, id)?;
+    mirror_api_key(secrets, id, None);
+    Ok(())
+}
+
+/// Tauri command wrapping [`connection_remove_and_clear_impl`].
 #[tauri::command]
 pub fn connection_remove(
     state: tauri::State<'_, ConnectionStore>,
     secrets: tauri::State<'_, SecretStore>,
     id: String,
 ) -> Result<(), String> {
-    connection_remove_impl(&state, &id).map_err(|e| e.to_string())?;
-    mirror_api_key(&secrets, &id, None);
-    Ok(())
+    connection_remove_and_clear_impl(&state, &secrets, &id).map_err(|e| e.to_string())
 }
 
 /// Probes reachability without persisting anything -- lets the Connections
@@ -627,7 +656,6 @@ pub fn model_add_manual(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::Manager as _;
 
     fn new_store() -> ConnectionStore {
         ConnectionStore::open_in_memory().expect("failed to open in-memory store")
@@ -948,15 +976,13 @@ mod tests {
     // ── connection_add / connection_edit / connection_remove / \
     //    connection_refresh_models command wrappers mirror into \
     //    SecretStore (B23) ──
-
-    fn managed_app_with_stores(secrets_dir: &Path) -> tauri::App<tauri::test::MockRuntime> {
-        let app = tauri::test::mock_builder()
-            .build(tauri::generate_context!())
-            .expect("failed to build mock app");
-        app.manage(new_store());
-        app.manage(SecretStore::open(secrets_dir).expect("failed to open secret store"));
-        app
-    }
+    //
+    // `connection_edit`/`connection_remove`'s full logic (persisted edit/
+    // removal plus the secure-storage mirror) lives in
+    // `connection_edit_and_mirror_impl`/`connection_remove_and_clear_impl`,
+    // exercised directly below against directly-constructed stores -- no
+    // `tauri::App`/`State` needed (a real app build initializes the
+    // tray-icon plugin, which requires the main thread).
 
     #[tokio::test]
     async fn connect_store_and_mirror_key_persists_the_key_into_secure_storage() {
@@ -1014,59 +1040,51 @@ mod tests {
     }
 
     #[test]
-    fn connection_edit_command_mirrors_a_changed_key_but_leaves_it_when_unspecified() {
-        let dir = TempSecretsDir::new("cmd-edit");
-        let app = managed_app_with_stores(&dir.0);
-        let added = app
-            .state::<ConnectionStore>()
+    fn connection_edit_and_mirror_impl_mirrors_a_changed_key_but_leaves_it_when_unspecified() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("cmd-edit");
+        let added = store
             .add("openai", "https://api.openai.com", Some("sk-old"), &[])
             .unwrap();
-        app.state::<SecretStore>().set(&added.id, "sk-old").unwrap();
+        secrets.set(&added.id, "sk-old").unwrap();
 
         // Editing without an `api_key` at all must not touch secure storage.
-        connection_edit(
-            app.state(),
-            app.state(),
-            added.id.clone(),
-            Some("https://api.example.com".to_string()),
+        connection_edit_and_mirror_impl(
+            &store,
+            &secrets,
+            &added.id,
+            Some("https://api.example.com"),
             None,
             None,
         )
         .unwrap();
-        assert_eq!(
-            app.state::<SecretStore>().get(&added.id).unwrap(),
-            Some("sk-old".to_string())
-        );
+        assert_eq!(secrets.get(&added.id).unwrap(), Some("sk-old".to_string()));
 
         // An explicit new key mirrors into secure storage too.
-        connection_edit(
-            app.state(),
-            app.state(),
-            added.id.clone(),
+        connection_edit_and_mirror_impl(
+            &store,
+            &secrets,
+            &added.id,
             None,
-            Some("sk-new".to_string()),
+            Some(Some("sk-new")),
             None,
         )
         .unwrap();
-        assert_eq!(
-            app.state::<SecretStore>().get(&added.id).unwrap(),
-            Some("sk-new".to_string())
-        );
+        assert_eq!(secrets.get(&added.id).unwrap(), Some("sk-new".to_string()));
     }
 
     #[test]
-    fn connection_remove_command_clears_the_secure_storage_key() {
-        let dir = TempSecretsDir::new("cmd-remove");
-        let app = managed_app_with_stores(&dir.0);
-        let added = app
-            .state::<ConnectionStore>()
+    fn connection_remove_and_clear_impl_clears_the_secure_storage_key() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("cmd-remove");
+        let added = store
             .add("openai", "https://api.openai.com", Some("sk-doomed"), &[])
             .unwrap();
-        app.state::<SecretStore>().set(&added.id, "sk-doomed").unwrap();
+        secrets.set(&added.id, "sk-doomed").unwrap();
 
-        connection_remove(app.state(), app.state(), added.id.clone()).unwrap();
+        connection_remove_and_clear_impl(&store, &secrets, &added.id).unwrap();
 
-        assert_eq!(app.state::<SecretStore>().get(&added.id).unwrap(), None);
+        assert_eq!(secrets.get(&added.id).unwrap(), None);
     }
 
     // ── provider_for (closing the A7 handoff) ──

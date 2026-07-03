@@ -350,30 +350,54 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
 /// [`PAUSED_ERROR`] while capturing is paused (`tray_pause`, B17/B23 — see
 /// the module docs' "Paused gate" note), checked before anything else so a
 /// paused hotkey press never touches Accessibility/the network.
-pub(crate) async fn run_refine<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+///
+/// Takes the stores directly (rather than an `AppHandle`) so the whole
+/// gate-then-pipeline sequence — including the paused gate's precedence
+/// over the permission/active-model checks — is unit-testable with
+/// directly-constructed, in-memory stores instead of a built `tauri::App`
+/// (a real app build initializes the tray-icon plugin, which requires the
+/// main thread and SIGSEGVs/errors under a test harness that runs tests off
+/// it; see `run_refine`, this function's thin `AppHandle`-unwrapping
+/// wrapper).
+async fn run_refine_with(
+    settings: &SettingsStore,
+    connections: &ConnectionStore,
+    secrets: &SecretStore,
+    refine_state: &RefineState,
 ) -> Result<RefineFlow, String> {
-    let settings = app.state::<SettingsStore>();
-    if is_paused(&settings) {
+    if is_paused(settings) {
         return Err(PAUSED_ERROR.to_string());
     }
 
     permission_gate(&permission::SystemAccessibilityChecker)?;
 
-    let connections = app.state::<ConnectionStore>();
-    let secrets = app.state::<SecretStore>();
-    let (provider, model) = active_provider(&connections, &settings, &secrets)?;
-    let fallbacks = resolve_fallback_targets(&connections, &settings, &secrets)?;
+    let (provider, model) = active_provider(connections, settings, secrets)?;
+    let fallbacks = resolve_fallback_targets(connections, settings, secrets)?;
 
-    let refine_state = app.state::<RefineState>();
     execute_refine(
-        &refine_state,
-        &settings,
+        refine_state,
+        settings,
         model,
         provider,
         fallbacks,
         SystemTextIo,
         SystemTextIo,
+    )
+    .await
+}
+
+/// Thin `AppHandle` wrapper around [`run_refine_with`], pulling the four
+/// managed stores out of Tauri state. This is the one piece that genuinely
+/// needs a running app/handle; the actual gate-and-pipeline logic it
+/// delegates to is unit-tested directly (see `run_refine_with`'s tests).
+pub(crate) async fn run_refine<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<RefineFlow, String> {
+    run_refine_with(
+        &app.state::<SettingsStore>(),
+        &app.state::<ConnectionStore>(),
+        &app.state::<SecretStore>(),
+        &app.state::<RefineState>(),
     )
     .await
 }
@@ -415,18 +439,7 @@ pub(crate) fn dispatch_hotkey<R: tauri::Runtime>(
     shortcut: &Shortcut,
     event: ShortcutEvent,
 ) -> Option<tauri::async_runtime::JoinHandle<Result<RefineFlow, String>>> {
-    if event.state != ShortcutState::Pressed {
-        return None;
-    }
-
-    let is_current_hotkey = hotkey_state
-        .current
-        .lock()
-        .unwrap()
-        .as_deref()
-        .and_then(|combo| Shortcut::from_str(combo).ok())
-        .is_some_and(|current| current == *shortcut);
-    if !is_current_hotkey {
+    if !should_dispatch_hotkey(hotkey_state, shortcut, &event) {
         return None;
     }
 
@@ -434,6 +447,31 @@ pub(crate) fn dispatch_hotkey<R: tauri::Runtime>(
     Some(tauri::async_runtime::spawn(async move {
         run_refine(&handle).await
     }))
+}
+
+/// The routing decision `dispatch_hotkey` applies: fires exactly for a
+/// key-down (`Pressed`) event whose `shortcut` matches whichever combo
+/// `hotkey_state` currently considers active (a stale/replaced combo, e.g.
+/// one left registered momentarily during a `hotkey_set` rebind, is
+/// ignored). Pulled out as a plain, app-free function so this decision is
+/// unit-testable without a `tauri::App`/`AppHandle` at all (mirrors
+/// `run_refine_with`'s extraction for the same "no mock app" reason).
+fn should_dispatch_hotkey(
+    hotkey_state: &HotkeyState,
+    shortcut: &Shortcut,
+    event: &ShortcutEvent,
+) -> bool {
+    if event.state != ShortcutState::Pressed {
+        return false;
+    }
+
+    hotkey_state
+        .current
+        .lock()
+        .unwrap()
+        .as_deref()
+        .and_then(|combo| Shortcut::from_str(combo).ok())
+        .is_some_and(|current| current == *shortcut)
 }
 
 /// Returns the text saved by the most recent `refine` call, or an error if
@@ -1284,64 +1322,72 @@ mod tests {
         assert!(!is_paused(&settings));
     }
 
-    // ---- dispatch_hotkey ----
-
-    /// Builds a `MockRuntime` app with every store `dispatch_hotkey`'s
-    /// spawned task (`run_refine`) needs managed, plus a `HotkeyState` set
-    /// to `current` (mirrors what `register_default`/`hotkey_set` would
-    /// have set on a real app). No stored connection, so a routed refine
-    /// always bottoms out at `NO_ACTIVE_MODEL_ERROR` -- enough to prove the
-    /// real pipeline ran without a live network call (same trick as
-    /// `tray.rs`'s `tray_refine_propagates_the_pipeline_result`).
-    fn managed_app_with_hotkey(current: Option<&str>) -> tauri::App<tauri::test::MockRuntime> {
-        let app = tauri::test::mock_builder()
-            .build(tauri::generate_context!())
-            .expect("failed to build mock app");
-        app.manage(SettingsStore::open_in_memory().expect("failed to open in-memory settings"));
-        app.manage(new_connections());
-        // `run_refine` (reached by a routed dispatch) now needs a
-        // `SecretStore` too (B23); the temp dir is deliberately leaked here
-        // (not tied to a `TempSecretsDir` guard) since these tests never
-        // reach a real read/write against it -- `active_provider` always
-        // bottoms out at `NO_ACTIVE_MODEL_ERROR` first (no stored
-        // connection), same as before this reconciliation.
-        let secrets_dir = std::env::temp_dir().join(format!(
-            "redrafter_lib_hotkey_secrets_{}_{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        app.manage(SecretStore::open(&secrets_dir).expect("failed to open secret store"));
-        app.manage(RefineState::default());
-
-        let hotkey_state = HotkeyState::default();
-        if let Some(combo) = current {
-            *hotkey_state.current.lock().unwrap() = Some(combo.to_string());
-        }
-        app.manage(hotkey_state);
-
-        app
-    }
+    // ---- run_refine_with (the pipeline `dispatch_hotkey`/`refine`/
+    // `tray_refine` all funnel through) ----
+    //
+    // Exercised directly against in-memory stores -- no `tauri::App` needed
+    // (`run_refine`, the `AppHandle`-unwrapping wrapper around this, is
+    // covered transitively: it does nothing but pull these same four stores
+    // out of Tauri state).
 
     #[tokio::test]
-    async fn dispatch_hotkey_ignores_a_release_event() {
-        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
-        let handle = app.handle().clone();
-        let hotkey_state = app.state::<HotkeyState>();
+    async fn run_refine_with_rejects_with_no_active_model_error_when_nothing_is_configured() {
+        let settings = new_settings();
+        let connections = new_connections();
+        let (secrets, _dir) = new_secrets("run-refine-no-model");
+        let refine_state = RefineState::default();
+
+        let result =
+            run_refine_with(&settings, &connections, &secrets, &refine_state).await;
+
+        // No stored connection with an enabled model -> `active_provider`
+        // rejects with `NO_ACTIVE_MODEL_ERROR`, proving the real pipeline
+        // (not a stub) ran.
+        assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
+    }
+
+    /// Boundary test for the B17/B23 paused-gate reconciliation: while
+    /// capturing is paused, the pipeline rejects with [`PAUSED_ERROR`]
+    /// *before* `active_provider`/`NO_ACTIVE_MODEL_ERROR` -- proving the
+    /// gate sits at the top of the one shared pipeline the hotkey, `refine`,
+    /// and `tray_refine` all funnel through, not just something
+    /// `tray_pause` itself checks client-side.
+    #[tokio::test]
+    async fn run_refine_with_rejects_with_paused_error_before_checking_for_an_active_model() {
+        let settings = new_settings();
+        set_paused(&settings, true).unwrap();
+        let connections = new_connections();
+        let (secrets, _dir) = new_secrets("run-refine-paused");
+        let refine_state = RefineState::default();
+
+        let result =
+            run_refine_with(&settings, &connections, &secrets, &refine_state).await;
+
+        assert_eq!(result, Err(PAUSED_ERROR.to_string()));
+    }
+
+    // ---- should_dispatch_hotkey (dispatch_hotkey's routing decision) ----
+
+    #[test]
+    fn should_dispatch_hotkey_ignores_a_release_event() {
+        let hotkey_state = HotkeyState::default();
+        *hotkey_state.current.lock().unwrap() = Some(hotkey::DEFAULT_HOTKEY.to_string());
         let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
         let event = ShortcutEvent {
             id: shortcut.id(),
             state: ShortcutState::Released,
         };
 
-        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event);
-        assert!(task.is_none(), "a key-up event must not trigger refine");
+        assert!(
+            !should_dispatch_hotkey(&hotkey_state, &shortcut, &event),
+            "a key-up event must not trigger refine"
+        );
     }
 
-    #[tokio::test]
-    async fn dispatch_hotkey_ignores_a_shortcut_that_is_not_the_current_hotkey() {
-        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
-        let handle = app.handle().clone();
-        let hotkey_state = app.state::<HotkeyState>();
+    #[test]
+    fn should_dispatch_hotkey_ignores_a_shortcut_that_is_not_the_current_hotkey() {
+        let hotkey_state = HotkeyState::default();
+        *hotkey_state.current.lock().unwrap() = Some(hotkey::DEFAULT_HOTKEY.to_string());
         // Something other than the currently-registered combo fired -- e.g.
         // a foreign shortcut sharing the plugin's one global handler.
         let other = Shortcut::from_str("Ctrl+Alt+T").unwrap();
@@ -1350,73 +1396,34 @@ mod tests {
             state: ShortcutState::Pressed,
         };
 
-        let task = dispatch_hotkey(&handle, &hotkey_state, &other, event);
         assert!(
-            task.is_none(),
+            !should_dispatch_hotkey(&hotkey_state, &other, &event),
             "a shortcut other than the current hotkey must not trigger refine"
         );
     }
 
-    #[tokio::test]
-    async fn dispatch_hotkey_ignores_events_when_no_hotkey_is_registered_yet() {
-        let app = managed_app_with_hotkey(None);
-        let handle = app.handle().clone();
-        let hotkey_state = app.state::<HotkeyState>();
+    #[test]
+    fn should_dispatch_hotkey_ignores_events_when_no_hotkey_is_registered_yet() {
+        let hotkey_state = HotkeyState::default();
         let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
         let event = ShortcutEvent {
             id: shortcut.id(),
             state: ShortcutState::Pressed,
         };
 
-        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event);
-        assert!(task.is_none());
+        assert!(!should_dispatch_hotkey(&hotkey_state, &shortcut, &event));
     }
 
-    #[tokio::test]
-    async fn dispatch_hotkey_routes_a_matching_press_to_run_refine() {
-        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
-        let handle = app.handle().clone();
-        let hotkey_state = app.state::<HotkeyState>();
+    #[test]
+    fn should_dispatch_hotkey_is_true_for_a_matching_key_down() {
+        let hotkey_state = HotkeyState::default();
+        *hotkey_state.current.lock().unwrap() = Some(hotkey::DEFAULT_HOTKEY.to_string());
         let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
         let event = ShortcutEvent {
             id: shortcut.id(),
             state: ShortcutState::Pressed,
         };
 
-        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event)
-            .expect("a matching key-down must spawn the refine pipeline");
-        let result = task
-            .await
-            .expect("the spawned refine task must not itself panic");
-        // No stored connection with an enabled model -> `run_refine` (via
-        // `active_provider`) rejects with `NO_ACTIVE_MODEL_ERROR`, proving
-        // the spawned task reached the real pipeline rather than a stub.
-        assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
-    }
-
-    /// Boundary test for the B17/B23 paused-gate reconciliation: a matching
-    /// hotkey press while paused must reject with [`PAUSED_ERROR`] *before*
-    /// `active_provider`/`NO_ACTIVE_MODEL_ERROR` -- proving the gate sits at
-    /// the top of the one shared `run_refine` pipeline the hotkey, `refine`,
-    /// and `tray_refine` all funnel through, not just something `tray_pause`
-    /// itself checks client-side.
-    #[tokio::test]
-    async fn dispatch_hotkey_routes_to_a_no_op_while_paused() {
-        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
-        set_paused(&app.state::<SettingsStore>(), true).unwrap();
-        let handle = app.handle().clone();
-        let hotkey_state = app.state::<HotkeyState>();
-        let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
-        let event = ShortcutEvent {
-            id: shortcut.id(),
-            state: ShortcutState::Pressed,
-        };
-
-        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event)
-            .expect("a matching key-down must still spawn the (now-gated) pipeline");
-        let result = task
-            .await
-            .expect("the spawned refine task must not itself panic");
-        assert_eq!(result, Err(PAUSED_ERROR.to_string()));
+        assert!(should_dispatch_hotkey(&hotkey_state, &shortcut, &event));
     }
 }
