@@ -22,6 +22,9 @@ mod permission {
 mod hotkey {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/hotkey.rs"));
 }
+mod secrets {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/secrets.rs"));
+}
 mod connections {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/connections.rs"));
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tray-set-launch-login"
+description = "Enables the tray_set_launch_login command without any pre-configured scope."
+commands.allow = ["tray_set_launch_login"]
+
+[[permission]]
+identifier = "deny-tray-set-launch-login"
+description = "Denies the tray_set_launch_login command without any pre-configured scope."
+commands.deny = ["tray_set_launch_login"]

@@ -1,16 +1,33 @@
-//! The Tauri composition root (A14): declares every Phase A backend module,
-//! manages their stores/state, registers every Phase A command in the
+//! The Tauri composition root (A14, extended B23): declares every backend
+//! module, manages their stores/state, registers every command in the
 //! invoke handler, and wires the global hotkey + tray.
 //!
-//! This is the capstone that assembles what A1b/A4-A9/A12 built; per the
-//! plan it does not re-implement those modules, only glues them together.
-//! The one exception is `refine`/`restore_original`/`inject_text`/
-//! `cancel_refine`: `orchestrator.rs` (A5) deliberately left these as plain
-//! methods on `Orchestrator` rather than `#[tauri::command]`s, since picking
-//! *which* provider/model to refine with is data-dependent (the active
-//! connection, chosen here at call time) rather than fixed at construction
-//! — so those thin command wrappers, and the `active_provider` lookup they
-//! share, live here instead.
+//! This is the capstone that assembles what A1b/A4-A9/A12 (Phase A) and
+//! B7/B7b/B8/B9/B10/B17 (Phase B) built; per the plan it does not
+//! re-implement those modules, only glues them together. The one exception
+//! is `refine`/`restore_original`/`inject_text`/`cancel_refine`:
+//! `orchestrator.rs` (A5) deliberately left these as plain methods on
+//! `Orchestrator` rather than `#[tauri::command]`s, since picking *which*
+//! provider/model to refine with is data-dependent (the active connection,
+//! chosen here at call time) rather than fixed at construction — so those
+//! thin command wrappers, and the `active_provider` lookup they share, live
+//! here instead.
+//!
+//! B23 also reconciles three seams Phase B's screen tasks deliberately left
+//! open (each documented at its own site below/in the module it touches):
+//!   - **Review-mode pending review** (B5/B6): `inject_text`/`cancel_refine`
+//!     now also resolve/clear `RefineState::pending_review`, so a review-mode
+//!     refine's accept/edit/discard actually clears the pending state
+//!     instead of leaving it stale (see `clear_pending_review`).
+//!   - **Real provider keys** (B7b/B10): `active_provider`/
+//!     `connection_refresh_models` resolve a connection's API key through
+//!     `secrets::secrets_get` first, falling back to the plaintext DB column
+//!     (see `connections::resolve_api_key`), so a real cloud connection's
+//!     refine actually authenticates.
+//!   - **Paused gate** (B17): `run_refine` -- the one pipeline `refine`,
+//!     `tray_refine`, and the global hotkey (`dispatch_hotkey`) all funnel
+//!     through -- now no-ops with [`PAUSED_ERROR`] while `tray_pause` has
+//!     paused capturing.
 
 pub mod command_parser;
 pub mod connections;
@@ -27,18 +44,29 @@ pub mod tray;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use llm_provider::OpenAiCompatProvider;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutEvent, ShortcutState};
 use tokio_util::sync::CancellationToken;
 
-use connections::{connection_add, connection_list, ConnectionStore};
+use connections::{
+    connection_add, connection_edit, connection_list, connection_refresh_models,
+    connection_remove, connection_test, model_add_manual, resolve_api_key, ConnectionStore,
+};
 use hotkey::{hotkey_set, HotkeyState};
-use orchestrator::{Orchestrator, RefineOutcome, SystemTextIo, TextCapture, TextInjector};
+use models::{
+    model_disable, model_set_active, model_toggle_favorite, models_list, ollama_pull,
+};
+use orchestrator::{
+    InjectMode, Orchestrator, RefineFlow, RefineOutcome, SystemTextIo, TextCapture, TextInjector,
+};
 use permission::{permission_open_settings, permission_status, AccessibilityChecker};
 use prompt_builder::BuildOptions;
+use secrets::{secrets_delete, secrets_set, secrets_set_key, SecretStore};
 use settings::{settings_get, settings_set, SettingsStore};
-use tray::{tray_quit, tray_refine};
+use tray::{
+    tray_check_updates, tray_pause, tray_quit, tray_refine, tray_resume, tray_set_active_model,
+    tray_set_launch_login,
+};
 
 /// Rejection string `refine` returns when no connection with an enabled
 /// model has been added yet. The frontend (`Capture.tsx`) matches this
@@ -48,30 +76,49 @@ pub const NO_ACTIVE_MODEL_ERROR: &str = "no_active_model";
 /// been revoked since the app started. The frontend matches this exact
 /// string to show the "permission needed" state (S36/A13).
 pub const PERMISSION_DENIED_ERROR: &str = "permission_denied";
+/// Rejection string `refine`/`tray_refine`/the global hotkey return while
+/// capturing is paused (B17's `tray_pause`, reconciled by B23 -- see the
+/// module docs' "Paused gate" note).
+pub const PAUSED_ERROR: &str = "paused";
 
 /// Settings key for the editable default refine direction (Behavior/A8).
 const DEFAULT_DIRECTION_KEY: &str = "refine.default_direction";
+/// Settings key for the configured inject mode (`"blind"`/`"review"`,
+/// Behavior/B6). Unset or any other value defaults to
+/// [`InjectMode::Blind`] -- Phase A's only behavior.
+const INJECT_MODE_KEY: &str = "behavior.inject_mode";
+/// Settings key `tray_pause`/`tray_resume` (B17/B23) persist the paused flag
+/// under; also read by [`run_refine`]'s paused gate. Shared with the
+/// frontend's own `Tray.tsx`, which persists/reads the same key name.
+pub(crate) const PAUSED_SETTING_KEY: &str = "paused";
 
 /// Holds what a single in-flight/most-recent refine needs across separate
-/// command invocations: the captured original (for `restore_original`) and
-/// a cancellation token (for `cancel_refine`). Managed as Tauri state.
+/// command invocations: the captured original (for `restore_original`), a
+/// cancellation token (for `cancel_refine`), and (B23) the most recent
+/// review-mode result still awaiting the user's accept/edit/discard
+/// decision (for `inject_text`/`cancel_refine` to resolve/clear -- see the
+/// module docs' "Review-mode pending review" note). Managed as Tauri state.
 #[derive(Default)]
 pub struct RefineState {
     restore_buffer: Mutex<Option<String>>,
     cancel_token: Mutex<CancellationToken>,
+    pending_review: Mutex<Option<RefineOutcome>>,
 }
 
 /// Picks the connection/model to refine with: the first stored connection
-/// that has at least one enabled model. Phase A has no active-model
-/// switcher yet (that's Phase B/C's Models screen + tray); this is the
-/// whole app's default provider until then.
+/// that has at least one enabled model. Phase B's Models screen (B8)/tray
+/// (B9) let the user choose a specific active model; until B23 wires that
+/// preference in here too, this remains the whole app's default provider
+/// selection (first enabled model found).
 ///
-/// Phase A's `ConnectionStore` doesn't persist API keys (Phase B's B7b adds
-/// a `key_ref`), so the provider is built with an empty key — enough for
-/// keyless local endpoints (Ollama) end-to-end; cloud providers need B7b's
-/// key storage before a real call succeeds.
+/// Resolves the connection's API key via `connections::resolve_api_key`
+/// (secure storage first, the plaintext DB column as fallback -- B23's
+/// reconciliation of B7b/B10) and builds the vendor-appropriate provider via
+/// `connections::provider_for`, rather than always assuming an
+/// OpenAI-compatible endpoint with no key.
 fn active_provider(
     connections: &ConnectionStore,
+    secrets: &SecretStore,
 ) -> Result<(Arc<dyn llm_provider::LlmProvider>, String), String> {
     let stored = connections.list().map_err(|e| e.to_string())?;
     let connection = stored
@@ -79,8 +126,38 @@ fn active_provider(
         .find(|c| !c.enabled_models.is_empty())
         .ok_or_else(|| NO_ACTIVE_MODEL_ERROR.to_string())?;
     let model = connection.enabled_models[0].clone();
-    let provider = OpenAiCompatProvider::new(&connection.base_url, "");
-    Ok((Arc::new(provider), model))
+    let api_key = resolve_api_key(connections, secrets, &connection.id).map_err(|e| e.to_string())?;
+    let provider = connections::provider_for(&connection.provider_kind, &connection.base_url, &api_key);
+    Ok((Arc::from(provider), model))
+}
+
+/// Reads the configured inject mode (Behavior/B6's `behavior.inject_mode`
+/// setting) as an [`InjectMode`], defaulting to [`InjectMode::Blind`] when
+/// unset or unrecognized.
+fn inject_mode_from_settings(settings: &SettingsStore) -> Result<InjectMode, String> {
+    let raw = settings.get(INJECT_MODE_KEY).map_err(|e| e.to_string())?;
+    Ok(match raw.as_deref() {
+        Some("review") => InjectMode::Review,
+        _ => InjectMode::Blind,
+    })
+}
+
+/// Whether capturing is currently paused (`tray_pause`/`tray_resume`, B17).
+pub(crate) fn is_paused(settings: &SettingsStore) -> bool {
+    settings
+        .get(PAUSED_SETTING_KEY)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("true")
+}
+
+/// Persists the paused flag `tray_pause`/`tray_resume` (`tray.rs`) toggle,
+/// and [`is_paused`]/[`run_refine`]'s gate read back.
+pub(crate) fn set_paused(settings: &SettingsStore, paused: bool) -> Result<(), String> {
+    settings
+        .set(PAUSED_SETTING_KEY, if paused { "true" } else { "false" })
+        .map_err(|e| e.to_string())
 }
 
 /// Rejects with [`PERMISSION_DENIED_ERROR`] unless `checker` reports the
@@ -99,14 +176,16 @@ fn permission_gate<C: AccessibilityChecker>(checker: &C) -> Result<(), String> {
 }
 
 /// Runs the refine pipeline against an already-selected `model`/`provider`
-/// and a given capture/inject seam, recording the result in `refine_state`.
+/// and a given capture/inject seam, recording the result in `refine_state`
+/// (including, for a review-mode result, `refine_state.pending_review` --
+/// B23's reconciliation of B5's review branch, see the module docs).
 ///
 /// Generic over `TextCapture`/`TextInjector` (mirrors `Orchestrator`'s own
 /// genericity) and takes the provider directly rather than looking it up
 /// itself, so the whole post-permission-check pipeline — settings read,
-/// orchestrator run, restore-buffer bookkeeping — is unit-testable with
-/// fakes (`orchestrator`'s `FakeProvider`/`FakeCapture`/`FakeInjector`)
-/// instead of a live network call.
+/// orchestrator run, restore-buffer/pending-review bookkeeping — is
+/// unit-testable with fakes (`orchestrator`'s `FakeProvider`/`FakeCapture`/
+/// `FakeInjector`) instead of a live network call.
 async fn execute_refine<C: TextCapture, I: TextInjector>(
     refine_state: &RefineState,
     settings: &SettingsStore,
@@ -114,10 +193,11 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
     provider: Arc<dyn llm_provider::LlmProvider>,
     capture: C,
     injector: I,
-) -> Result<RefineOutcome, String> {
+) -> Result<RefineFlow, String> {
     let direction = settings
         .get(DEFAULT_DIRECTION_KEY)
         .map_err(|e| e.to_string())?;
+    let mode = inject_mode_from_settings(settings)?;
     let opts = BuildOptions {
         direction,
         model,
@@ -128,26 +208,40 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
     *refine_state.cancel_token.lock().unwrap() = cancel.clone();
 
     let orch = Orchestrator::new(capture, injector, provider);
-    let outcome = orch
-        .refine(&opts, cancel)
+    let flow = orch
+        .refine_with(&opts, &[], mode, cancel)
         .await
         .map_err(|e| e.to_string())?;
+
+    let outcome = flow.clone().into_outcome();
     *refine_state.restore_buffer.lock().unwrap() = Some(outcome.original.clone());
-    Ok(outcome)
+    *refine_state.pending_review.lock().unwrap() = match &flow {
+        RefineFlow::PendingReview(_) => Some(outcome),
+        RefineFlow::Injected(_) => None,
+    };
+    Ok(flow)
 }
 
 /// The shared implementation behind the `refine` command, the tray's
 /// Refine entry (`tray::tray_refine`), and the global hotkey
-/// (`dispatch_hotkey`, below) — one pipeline, three triggers.
+/// (`dispatch_hotkey`, below) — one pipeline, three triggers. No-ops with
+/// [`PAUSED_ERROR`] while capturing is paused (`tray_pause`, B17/B23 — see
+/// the module docs' "Paused gate" note), checked before anything else so a
+/// paused hotkey press never touches Accessibility/the network.
 pub(crate) async fn run_refine<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-) -> Result<RefineOutcome, String> {
+) -> Result<RefineFlow, String> {
+    let settings = app.state::<SettingsStore>();
+    if is_paused(&settings) {
+        return Err(PAUSED_ERROR.to_string());
+    }
+
     permission_gate(&permission::SystemAccessibilityChecker)?;
 
     let connections = app.state::<ConnectionStore>();
-    let (provider, model) = active_provider(&connections)?;
+    let secrets = app.state::<SecretStore>();
+    let (provider, model) = active_provider(&connections, &secrets)?;
 
-    let settings = app.state::<SettingsStore>();
     let refine_state = app.state::<RefineState>();
     execute_refine(
         &refine_state,
@@ -161,11 +255,13 @@ pub(crate) async fn run_refine<R: tauri::Runtime>(
 }
 
 /// Tauri command: runs the default refine pipeline (capture -> prompt ->
-/// model -> blind inject). Rejects with [`NO_ACTIVE_MODEL_ERROR`] or
-/// [`PERMISSION_DENIED_ERROR`] for those specific failure modes; any other
-/// failure rejects with a generic message and injects nothing.
+/// model -> inject, or -- when the configured inject mode is `Review` --
+/// suspend for the user's accept/edit/discard, see [`RefineFlow`]). Rejects
+/// with [`NO_ACTIVE_MODEL_ERROR`], [`PERMISSION_DENIED_ERROR`], or
+/// [`PAUSED_ERROR`] for those specific failure modes; any other failure
+/// rejects with a generic message and injects nothing.
 #[tauri::command]
-async fn refine<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<RefineOutcome, String> {
+async fn refine<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<RefineFlow, String> {
     run_refine(&app).await
 }
 
@@ -194,7 +290,7 @@ pub(crate) fn dispatch_hotkey<R: tauri::Runtime>(
     hotkey_state: &HotkeyState,
     shortcut: &Shortcut,
     event: ShortcutEvent,
-) -> Option<tauri::async_runtime::JoinHandle<Result<RefineOutcome, String>>> {
+) -> Option<tauri::async_runtime::JoinHandle<Result<RefineFlow, String>>> {
     if event.state != ShortcutState::Pressed {
         return None;
     }
@@ -238,21 +334,48 @@ fn restore_original(refine_state: tauri::State<'_, RefineState>) -> Result<Strin
     restore_original_buffer(&refine_state)
 }
 
-/// Tauri command: injects `text` into the focused app in place of the
-/// current selection.
-#[tauri::command]
-fn inject_text(text: String) -> Result<(), String> {
-    text_inject::inject(&text).map_err(|e| e.to_string())
+/// Clears any pending review result. Shared by [`inject_text`] (an
+/// injection -- whether a review accept/edit-accept or a plain restore --
+/// supersedes a stale pending draft) and [`cancel_refine`] (an explicit
+/// discard). Plain logic over `&RefineState`, mirroring
+/// `restore_original_buffer`/`cancel_refine_token`, so it's unit-testable
+/// without a real OS inject call.
+fn clear_pending_review(refine_state: &RefineState) {
+    *refine_state.pending_review.lock().unwrap() = None;
 }
 
-/// Cancels the in-flight `refine` call, if any. The plain logic behind the
+/// Injects `text`, then clears any pending review result (see
+/// `clear_pending_review`). The plain logic behind the `inject_text`
+/// command, taking `&RefineState` directly so it's unit-testable without a
+/// `tauri::State` harness (mirrors `restore_original_buffer`).
+fn inject_text_impl(refine_state: &RefineState, text: &str) -> Result<(), String> {
+    text_inject::inject(text).map_err(|e| e.to_string())?;
+    clear_pending_review(refine_state);
+    Ok(())
+}
+
+/// Tauri command: injects `text` into the focused app in place of the
+/// current selection. Used both for a plain restore and for a review-mode
+/// accept/edit-accept (`Capture.tsx`) -- either way, a pending review result
+/// is now resolved (see `clear_pending_review`).
+#[tauri::command]
+fn inject_text(refine_state: tauri::State<'_, RefineState>, text: String) -> Result<(), String> {
+    inject_text_impl(&refine_state, &text)
+}
+
+/// Cancels the in-flight `refine` call, if any, and discards any pending
+/// review result (see `clear_pending_review`) -- the plain logic behind the
 /// `cancel_refine` command, taking `&RefineState` directly (see
 /// `restore_original_buffer`).
 fn cancel_refine_token(refine_state: &RefineState) {
     refine_state.cancel_token.lock().unwrap().cancel();
+    clear_pending_review(refine_state);
 }
 
-/// Tauri command: cancels the in-flight `refine` call, if any.
+/// Tauri command: cancels the in-flight `refine` call, if any, and discards
+/// any pending review result (`Capture.tsx`'s Discard action, B5/B6, now
+/// resolved by B23 — see the module docs' "Review-mode pending review"
+/// note).
 #[tauri::command]
 fn cancel_refine(refine_state: tauri::State<'_, RefineState>) {
     cancel_refine_token(&refine_state);
@@ -260,8 +383,8 @@ fn cancel_refine(refine_state: tauri::State<'_, RefineState>) {
 
 /// Builds the invoke handler used by the production app. Exposed so
 /// `tests/wireup_test.rs` can assert the exact registered command set
-/// (including `tray_refine`/`tray_quit`) without spinning up a real
-/// window/OS integration.
+/// (Phase A's plus every Phase B command B23 wires up) without spinning up a
+/// real window/OS integration.
 pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
     tauri::generate_handler![
         settings_get,
@@ -271,25 +394,48 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         hotkey_set,
         connection_add,
         connection_list,
+        connection_edit,
+        connection_remove,
+        connection_test,
+        connection_refresh_models,
+        model_add_manual,
+        models_list,
+        model_set_active,
+        model_disable,
+        model_toggle_favorite,
+        ollama_pull,
+        secrets_set,
+        secrets_set_key,
+        secrets_delete,
         refine,
         restore_original,
         inject_text,
         cancel_refine,
         tray_refine,
         tray_quit,
+        tray_set_active_model,
+        tray_pause,
+        tray_resume,
+        tray_check_updates,
+        tray_set_launch_login,
     ]
 }
 
-/// Opens (creating on first run) the settings/connections SQLite stores
+/// Opens (creating on first run) the settings/connections/secrets stores
 /// under the app's data directory.
 fn open_stores<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-) -> anyhow::Result<(SettingsStore, ConnectionStore)> {
+) -> anyhow::Result<(SettingsStore, ConnectionStore, SecretStore)> {
     let app_data = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_data)?;
     let settings = SettingsStore::open(&app_data.join("settings.sqlite3"))?;
     let connections = ConnectionStore::open(&app_data.join("connections.sqlite3"))?;
-    Ok((settings, connections))
+    let secrets = SecretStore::open(&app_data)?;
+    // Honor a previously persisted storage-backend choice (`secrets_set`,
+    // B10/B23) immediately -- otherwise every restart would silently reset
+    // to the encrypted-file default until the user re-toggled the picker.
+    secrets.set_storage_backend(secrets::storage_backend_from_settings(&settings));
+    Ok((settings, connections, secrets))
 }
 
 /// The Tauri app's entry point, called by `main.rs`.
@@ -312,10 +458,11 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            let (settings, connections) = open_stores(&handle)
-                .map_err(|e| format!("failed to open settings/connections stores: {e}"))?;
+            let (settings, connections, secrets) = open_stores(&handle)
+                .map_err(|e| format!("failed to open settings/connections/secrets stores: {e}"))?;
             app.manage(settings);
             app.manage(connections);
+            app.manage(secrets);
             app.manage(HotkeyState::default());
             app.manage(RefineState::default());
 
@@ -351,11 +498,40 @@ mod tests {
         ConnectionStore::open_in_memory().expect("failed to open in-memory connections")
     }
 
+    /// Minimal RAII temp-dir guard for a `SecretStore` in tests (mirrors
+    /// `secrets.rs`'s/`connections.rs`'s own `TempDir` helpers -- `SecretStore`
+    /// has no `open_in_memory`, only a file-backed `open`).
+    struct TempSecretsDir(std::path::PathBuf);
+
+    impl TempSecretsDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "redrafter_lib_secrets_{label}_{}_{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempSecretsDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn new_secrets(label: &str) -> (SecretStore, TempSecretsDir) {
+        let dir = TempSecretsDir::new(label);
+        let store = SecretStore::open(&dir.0).expect("failed to open secret store");
+        (store, dir)
+    }
+
     #[test]
     fn active_provider_errs_when_no_connection_has_an_enabled_model() {
         let connections = new_connections();
+        let (secrets, _dir) = new_secrets("no-enabled-model");
         assert_eq!(
-            active_provider(&connections).err(),
+            active_provider(&connections, &secrets).err(),
             Some(NO_ACTIVE_MODEL_ERROR.to_string())
         );
     }
@@ -363,6 +539,7 @@ mod tests {
     #[test]
     fn active_provider_returns_the_first_connection_with_an_enabled_model() {
         let connections = new_connections();
+        let (secrets, _dir) = new_secrets("first-enabled-model");
         // No enabled models yet -> skipped by `active_provider`.
         connections
             .add("openai", "https://api.openai.com", None, &[])
@@ -376,8 +553,41 @@ mod tests {
             )
             .unwrap();
 
-        let (_, model) = active_provider(&connections).expect("should find an enabled model");
+        let (_, model) =
+            active_provider(&connections, &secrets).expect("should find an enabled model");
         assert_eq!(model, "llama3");
+    }
+
+    /// Boundary test for the B7b/B10 reconciliation: a connection whose key
+    /// only lives in secure storage (never persisted to the plaintext DB
+    /// column) still resolves through `active_provider`, proving the real
+    /// call site (not just `connections::resolve_api_key` in isolation)
+    /// prefers secure storage.
+    #[test]
+    fn active_provider_resolves_the_key_through_secure_storage() {
+        let connections = new_connections();
+        let (secrets, _dir) = new_secrets("active-provider-secure-key");
+        let anthropic = connections
+            .add(
+                "anthropic",
+                "https://api.anthropic.com",
+                None,
+                &["claude-opus-4-6".to_string()],
+            )
+            .unwrap();
+        secrets.set(&anthropic.id, "sk-ant-secure").unwrap();
+
+        let (provider, model) =
+            active_provider(&connections, &secrets).expect("should find the anthropic connection");
+
+        assert_eq!(model, "claude-opus-4-6");
+        // `provider_for` picks the vendor-native implementation, not always
+        // OpenAI-compatible -- `provider_name()` is the only externally
+        // observable way to tell without a live call.
+        assert_eq!(
+            provider.provider_name(),
+            llm_provider::AnthropicProvider::new("x", "y").provider_name()
+        );
     }
 
     // ---- permission_gate ----
@@ -432,7 +642,25 @@ mod tests {
         assert!(token.is_cancelled());
     }
 
-    // ---- inject_text ----
+    #[test]
+    fn cancel_refine_token_also_discards_a_pending_review_result() {
+        // B23 reconciliation: `cancel_refine` (Capture.tsx's Discard, in
+        // review mode) must clear `pending_review` too, not just cancel the
+        // in-flight token -- see the module docs' "Review-mode pending
+        // review" note.
+        let state = RefineState::default();
+        *state.pending_review.lock().unwrap() = Some(RefineOutcome {
+            original: "orig".to_string(),
+            refined: "refined".to_string(),
+            model: "fake-model".to_string(),
+        });
+
+        cancel_refine_token(&state);
+
+        assert_eq!(state.pending_review.lock().unwrap().clone(), None);
+    }
+
+    // ---- inject_text / clear_pending_review ----
 
     #[test]
     #[cfg(not(target_os = "macos"))]
@@ -440,7 +668,22 @@ mod tests {
         // `text-inject` only implements real injection on macOS; off macOS
         // this exercises `inject_text`'s error-mapping without touching any
         // real OS API.
-        assert!(inject_text("hello".to_string()).is_err());
+        let state = RefineState::default();
+        assert!(inject_text_impl(&state, "hello").is_err());
+    }
+
+    #[test]
+    fn clear_pending_review_clears_a_populated_slot() {
+        let state = RefineState::default();
+        *state.pending_review.lock().unwrap() = Some(RefineOutcome {
+            original: "orig".to_string(),
+            refined: "refined".to_string(),
+            model: "fake-model".to_string(),
+        });
+
+        clear_pending_review(&state);
+
+        assert_eq!(state.pending_review.lock().unwrap().clone(), None);
     }
 
     // ---- execute_refine (happy path, with fakes) ----
@@ -506,7 +749,7 @@ mod tests {
         let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
         let injector = FakeInjector::default();
 
-        let outcome = execute_refine(
+        let flow = execute_refine(
             &refine_state,
             &settings,
             "fake-model".to_string(),
@@ -517,6 +760,8 @@ mod tests {
         .await
         .expect("execute_refine should succeed");
 
+        assert!(matches!(flow, RefineFlow::Injected(_)), "default mode is blind");
+        let outcome = flow.into_outcome();
         assert_eq!(outcome.original, "original text");
         assert_eq!(outcome.refined, "refined text");
         assert_eq!(injector.injected(), vec!["refined text".to_string()]);
@@ -525,6 +770,135 @@ mod tests {
             restore_original_buffer(&refine_state),
             Ok("original text".to_string())
         );
+        // Blind mode never leaves a pending review behind.
+        assert_eq!(refine_state.pending_review.lock().unwrap().clone(), None);
+    }
+
+    /// Boundary test for the B5/B23 reconciliation: a review-mode refine
+    /// (`behavior.inject_mode = "review"`) suspends *without injecting* and
+    /// fills `RefineState::pending_review` -- the state `inject_text`
+    /// (accept) or `cancel_refine` (discard) then resolves. Cross-platform:
+    /// the pipeline's own `Orchestrator` (review branch) never calls the
+    /// real OS injector, so this needs no macOS.
+    #[tokio::test]
+    async fn review_mode_refine_leaves_a_pending_review_awaiting_the_users_choice() {
+        let refine_state = RefineState::default();
+        let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
+        settings.set(INJECT_MODE_KEY, "review").unwrap();
+        let injector = FakeInjector::default();
+
+        let flow = execute_refine(
+            &refine_state,
+            &settings,
+            "fake-model".to_string(),
+            Arc::new(FakeProvider("refined text".to_string())),
+            FakeCapture("original text".to_string()),
+            injector.clone(),
+        )
+        .await
+        .expect("execute_refine should succeed");
+
+        assert!(matches!(flow, RefineFlow::PendingReview(_)));
+        assert!(injector.injected().is_empty(), "review mode must not inject yet");
+        assert_eq!(
+            refine_state.pending_review.lock().unwrap().clone(),
+            Some(flow.into_outcome())
+        );
+    }
+
+    /// The discard half of the review loop: after a review-mode refine
+    /// leaves a pending result, `cancel_refine` (Capture.tsx's Discard)
+    /// clears it without ever injecting. Cross-platform (discard never
+    /// touches the OS injector).
+    #[tokio::test]
+    async fn review_mode_refine_pends_then_cancel_refine_discards_it() {
+        let refine_state = RefineState::default();
+        let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
+        settings.set(INJECT_MODE_KEY, "review").unwrap();
+        let injector = FakeInjector::default();
+
+        execute_refine(
+            &refine_state,
+            &settings,
+            "fake-model".to_string(),
+            Arc::new(FakeProvider("refined text".to_string())),
+            FakeCapture("original text".to_string()),
+            injector.clone(),
+        )
+        .await
+        .expect("execute_refine should succeed");
+        assert!(refine_state.pending_review.lock().unwrap().is_some());
+
+        cancel_refine_token(&refine_state);
+
+        assert_eq!(refine_state.pending_review.lock().unwrap().clone(), None);
+        assert!(injector.injected().is_empty(), "discard must never inject");
+    }
+
+    /// The accept half of the review loop, macOS-only: `inject_text`
+    /// (Capture.tsx's Accept/Edit-accept) both injects the chosen text
+    /// *and* clears the pending review. Gated to macOS because `inject_text`
+    /// goes through the real `text-inject` crate, which only implements
+    /// injection there (off macOS it errors before reaching the clear --
+    /// covered by `inject_text_reports_the_platform_unsupported_error` and
+    /// the cross-platform `clear_pending_review_clears_a_populated_slot`).
+    #[tokio::test]
+    #[cfg(target_os = "macos")]
+    async fn review_mode_refine_pends_then_inject_text_accepts_and_clears_it() {
+        let refine_state = RefineState::default();
+        let settings = SettingsStore::open_in_memory().expect("failed to open in-memory settings");
+        settings.set(INJECT_MODE_KEY, "review").unwrap();
+        let injector = FakeInjector::default();
+
+        execute_refine(
+            &refine_state,
+            &settings,
+            "fake-model".to_string(),
+            Arc::new(FakeProvider("refined text".to_string())),
+            FakeCapture("original text".to_string()),
+            injector,
+        )
+        .await
+        .expect("execute_refine should succeed");
+        assert!(refine_state.pending_review.lock().unwrap().is_some());
+
+        inject_text_impl(&refine_state, "refined text").expect("inject should succeed on macOS");
+
+        assert_eq!(refine_state.pending_review.lock().unwrap().clone(), None);
+    }
+
+    // ---- inject_mode_from_settings ----
+
+    #[test]
+    fn inject_mode_from_settings_defaults_to_blind_when_unset() {
+        let settings = SettingsStore::open_in_memory().unwrap();
+        assert_eq!(inject_mode_from_settings(&settings), Ok(InjectMode::Blind));
+    }
+
+    #[test]
+    fn inject_mode_from_settings_reads_review_when_configured() {
+        let settings = SettingsStore::open_in_memory().unwrap();
+        settings.set(INJECT_MODE_KEY, "review").unwrap();
+        assert_eq!(inject_mode_from_settings(&settings), Ok(InjectMode::Review));
+    }
+
+    // ---- paused gate (is_paused / set_paused / run_refine) ----
+
+    #[test]
+    fn is_paused_defaults_to_false_when_unset() {
+        let settings = SettingsStore::open_in_memory().unwrap();
+        assert!(!is_paused(&settings));
+    }
+
+    #[test]
+    fn set_paused_then_is_paused_round_trips() {
+        let settings = SettingsStore::open_in_memory().unwrap();
+
+        set_paused(&settings, true).unwrap();
+        assert!(is_paused(&settings));
+
+        set_paused(&settings, false).unwrap();
+        assert!(!is_paused(&settings));
     }
 
     // ---- dispatch_hotkey ----
@@ -542,6 +916,18 @@ mod tests {
             .expect("failed to build mock app");
         app.manage(SettingsStore::open_in_memory().expect("failed to open in-memory settings"));
         app.manage(new_connections());
+        // `run_refine` (reached by a routed dispatch) now needs a
+        // `SecretStore` too (B23); the temp dir is deliberately leaked here
+        // (not tied to a `TempSecretsDir` guard) since these tests never
+        // reach a real read/write against it -- `active_provider` always
+        // bottoms out at `NO_ACTIVE_MODEL_ERROR` first (no stored
+        // connection), same as before this reconciliation.
+        let secrets_dir = std::env::temp_dir().join(format!(
+            "redrafter_lib_hotkey_secrets_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        app.manage(SecretStore::open(&secrets_dir).expect("failed to open secret store"));
         app.manage(RefineState::default());
 
         let hotkey_state = HotkeyState::default();
@@ -623,5 +1009,31 @@ mod tests {
         // `active_provider`) rejects with `NO_ACTIVE_MODEL_ERROR`, proving
         // the spawned task reached the real pipeline rather than a stub.
         assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
+    }
+
+    /// Boundary test for the B17/B23 paused-gate reconciliation: a matching
+    /// hotkey press while paused must reject with [`PAUSED_ERROR`] *before*
+    /// `active_provider`/`NO_ACTIVE_MODEL_ERROR` -- proving the gate sits at
+    /// the top of the one shared `run_refine` pipeline the hotkey, `refine`,
+    /// and `tray_refine` all funnel through, not just something `tray_pause`
+    /// itself checks client-side.
+    #[tokio::test]
+    async fn dispatch_hotkey_routes_to_a_no_op_while_paused() {
+        let app = managed_app_with_hotkey(Some(hotkey::DEFAULT_HOTKEY));
+        set_paused(&app.state::<SettingsStore>(), true).unwrap();
+        let handle = app.handle().clone();
+        let hotkey_state = app.state::<HotkeyState>();
+        let shortcut = Shortcut::from_str(hotkey::DEFAULT_HOTKEY).unwrap();
+        let event = ShortcutEvent {
+            id: shortcut.id(),
+            state: ShortcutState::Pressed,
+        };
+
+        let task = dispatch_hotkey(&handle, &hotkey_state, &shortcut, event)
+            .expect("a matching key-down must still spawn the (now-gated) pipeline");
+        let result = task
+            .await
+            .expect("the spawned refine task must not itself panic");
+        assert_eq!(result, Err(PAUSED_ERROR.to_string()));
     }
 }

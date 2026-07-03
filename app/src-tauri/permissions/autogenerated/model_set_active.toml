@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-model-set-active"
+description = "Enables the model_set_active command without any pre-configured scope."
+commands.allow = ["model_set_active"]
+
+[[permission]]
+identifier = "deny-model-set-active"
+description = "Denies the model_set_active command without any pre-configured scope."
+commands.deny = ["model_set_active"]

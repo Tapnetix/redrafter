@@ -12,10 +12,16 @@
 //
 // The Presets/History sections have no screen yet (Phase C); their
 // rail/sidebar nav items navigate to a "coming soon" placeholder so neither
-// is ever dead. Models (B8) is the first Phase B screen wired in here. The
-// Capture panel is normally its own hotkey-triggered overlay window (wired
-// natively in lib.rs); here the rail's implicit capture entry and the
-// standalone /capture route stand in for that trigger.
+// is ever dead. Models (B8) and Connections (B7) are the Phase B screens
+// wired in here alongside Phase A's General/Behavior. The Capture panel and
+// the menu-bar Tray are each normally their own window (wired natively in
+// lib.rs / created from tauri.conf.json's trayIcon); their standalone
+// `/capture` and `/tray` routes stand in for those surfaces here.
+//
+// B23 wires the shared `model-store` in: the Sidebar's active-model
+// indicator now reflects B8's real active model (refreshed whenever the
+// section changes, so a pick made on the Models screen shows up on return),
+// rather than only the Phase A first-enabled-connection heuristic.
 
 import { useCallback, useEffect, useState } from 'react';
 import NavRail, { type Section } from '@/components/NavRail';
@@ -27,6 +33,7 @@ import Behavior from '@/screens/Behavior';
 import Connections from '@/screens/Connections';
 import Models from '@/screens/Models';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
+import { useModelStore } from '@/lib/model-store';
 import { applyTheme, loadTheme } from '@/lib/theme';
 
 /** Where the boot check has decided the user should land. */
@@ -98,6 +105,7 @@ function SectionView({ section, onNavigate }: { section: Section; onNavigate: (s
 export default function App() {
   const [route, setRoute] = useState<Route>('loading');
   const [section, setSection] = useState<Section>('general');
+  const modelStore = useModelStore();
 
   // Boot: rehydrate the theme and decide where to land.
   useEffect(() => {
@@ -118,6 +126,18 @@ export default function App() {
     setRoute(await decideRoute());
   }, []);
 
+  // Navigating between sections re-pulls the shared model store, so a model
+  // picked on the Models screen is reflected in the Sidebar's indicator when
+  // the user moves back to another section (the store is the single source
+  // the tray + models + capture all read).
+  const navigate = useCallback(
+    (next: Section) => {
+      setSection(next);
+      void modelStore.refresh();
+    },
+    [modelStore],
+  );
+
   if (route === 'loading') {
     return <div data-testid="app-loading" aria-busy="true" />;
   }
@@ -132,14 +152,14 @@ export default function App() {
 
   return (
     <div className="app" data-testid="app-shell">
-      <NavRail active={section} onNavigate={setSection} />
-      <Sidebar active={section} onNavigate={setSection} />
+      <NavRail active={section} onNavigate={navigate} />
+      <Sidebar active={section} onNavigate={navigate} activeModelLabel={modelStore.activeModelLabel} />
       <main className="main">
         <header className="topbar">
           <h1 className="topbar__title">{SECTION_TITLES[section]}</h1>
         </header>
         <div className="content" style={{ padding: 0 }}>
-          <SectionView section={section} onNavigate={setSection} />
+          <SectionView section={section} onNavigate={navigate} />
         </div>
       </main>
     </div>

@@ -1,35 +1,58 @@
-//! Secure key storage (B10).
-//!
-//! Persists provider API keys at rest, addressed by connection id
-//! (`connections.rs`'s `Connection::key_ref`). Two backends, selected by a
-//! `storage_backend` setting (`STORAGE_BACKEND_SETTING_KEY`, read through
-//! `settings.rs`):
-//!
-//!   - [`EncryptedFileBackend`] (default): AES-256-GCM (via the `ring`
-//!     crate) encrypts each key before it ever touches disk. The symmetric
-//!     "master key" is 32 random bytes generated on first use and stored in
-//!     a sibling file (`secrets.key`) with owner-only permissions (`0600`
-//!     on unix). This keeps keys out of the plaintext config/db (no more
-//!     `grep`-able secrets, no plaintext copies in ad-hoc backups of just
-//!     the config file) but -- like most keyless-KMS desktop schemes -- it
-//!     does not defend against an attacker with full access to the same OS
-//!     user account, since the master key sits unencrypted next to the
-//!     ciphertext it protects. Users who want a stronger guarantee opt into
-//!     the OS keychain backend instead.
-//!   - [`KeychainBackend`] (opt-in, `storage_backend = "keychain"`):
-//!     delegates to the macOS Keychain via the `security-framework` crate's
-//!     `passwords` module (`set_generic_password`/`get_generic_password`/
-//!     `delete_generic_password`). cfg-gated to macOS; every other target
-//!     compiles a stub that reports the backend unsupported rather than
-//!     failing the build, so the crate (and this module's tests) still
-//!     compile and run off macOS. The real keychain path is verified on
-//!     macOS hardware separately, per the plan.
-//!
-//! [`secrets_get`] is deliberately a plain function, never a
-//! `#[tauri::command]` -- there is no IPC path that returns a raw key to
-//! the frontend. Only backend-internal code (`connections.rs`'s
-//! `provider_for`, once B23 reconciles the two key-storage call sites) may
-//! call it.
+// Secure key storage (B10).
+//
+// Persists provider API keys at rest, addressed by connection id
+// (`connections.rs`'s `Connection::key_ref`). Two backends, selected by a
+// `storage_backend` setting (`STORAGE_BACKEND_SETTING_KEY`, read through
+// `settings.rs`):
+//
+//   - [`EncryptedFileBackend`] (default): AES-256-GCM (via the `ring`
+//     crate) encrypts each key before it ever touches disk. The symmetric
+//     "master key" is 32 random bytes generated on first use and stored in
+//     a sibling file (`secrets.key`) with owner-only permissions (`0600`
+//     on unix). This keeps keys out of the plaintext config/db (no more
+//     `grep`-able secrets, no plaintext copies in ad-hoc backups of just
+//     the config file) but -- like most keyless-KMS desktop schemes -- it
+//     does not defend against an attacker with full access to the same OS
+//     user account, since the master key sits unencrypted next to the
+//     ciphertext it protects. Users who want a stronger guarantee opt into
+//     the OS keychain backend instead.
+//   - [`KeychainBackend`] (opt-in, `storage_backend = "keychain"`):
+//     delegates to the macOS Keychain via the `security-framework` crate's
+//     `passwords` module (`set_generic_password`/`get_generic_password`/
+//     `delete_generic_password`). cfg-gated to macOS; every other target
+//     compiles a stub that reports the backend unsupported rather than
+//     failing the build, so the crate (and this module's tests) still
+//     compile and run off macOS. The real keychain path is verified on
+//     macOS hardware separately, per the plan.
+//
+// [`secrets_get`] is deliberately a plain function, never a
+// `#[tauri::command]` -- there is no IPC path that returns a raw key to
+// the frontend. Only backend-internal code (`connections.rs`'s
+// `resolve_api_key`/`provider_for` call sites, wired by B23) may call it.
+//
+// ### The `secrets_set` name (B23 reconciliation)
+//
+// `controls/connections.json`'s `key-storage-*` controls -- and the
+// Connections screen (`Connections.tsx`) + its locked e2e spec
+// (`e2e/specs/b10.spec.ts`, S21) built against them -- already call a
+// command named `secrets_set` with a single `location` argument to choose
+// the storage *backend* (`"encrypted_file"`/`"keychain"`). That predates
+// this module, which originally used the same name for a different
+// operation (persisting one connection's key). Registering the latter
+// under the same literal command name would silently break the former at
+// runtime (Tauri binds IPC arguments by name -- a `location` payload
+// wouldn't satisfy a `connection_id`/`key` signature, or vice versa) even
+// though nothing in today's test suite would catch it (the frontend/e2e
+// suite only ever drives the mocked IPC layer, never the real Rust
+// signature).
+//
+// B23 resolves this in favor of the already-shipped frontend contract:
+// [`secrets_set`] (this file) is the storage-backend picker, matching
+// `controls/connections.json`. The per-connection key setter is
+// registered under [`secrets_set_key`] instead -- not yet called from the
+// frontend (connection add/edit already carry the key inline and B23
+// mirrors it into [`SecretStore`] internally), but kept registered/ACL'd
+// for the same forward-looking reason `secrets_delete` already was.
 
 use anyhow::{bail, Context, Result};
 use base64::Engine as _;
@@ -414,10 +437,13 @@ pub fn set_storage_backend(
 /// backend is currently active. Never echoes the key back -- the frontend
 /// gets an `Ok(())`/error, nothing else (see module docs).
 ///
-/// Not yet in the production invoke handler -- B23 registers it (see
-/// module docs).
+/// Registered as `secrets_set_key` (not `secrets_set` -- see the module
+/// docs' "The `secrets_set` name" section for why).
+// orphan-ok: forward-reference IPC endpoint for the Phase C connection
+// key-editor; keys currently flow via connection_add/edit mirroring into
+// SecretStore.
 #[tauri::command]
-pub fn secrets_set(
+pub fn secrets_set_key(
     state: tauri::State<'_, SecretStore>,
     connection_id: String,
     key: String,
@@ -426,14 +452,29 @@ pub fn secrets_set(
 }
 
 /// Tauri command: deletes the stored key for `connection_id`, if any
-/// (idempotent -- succeeds even if none was stored). Not yet in the
-/// production invoke handler -- B23 registers it (see module docs).
+/// (idempotent -- succeeds even if none was stored).
 #[tauri::command]
 pub fn secrets_delete(
     state: tauri::State<'_, SecretStore>,
     connection_id: String,
 ) -> Result<(), String> {
     state.delete(&connection_id).map_err(|e| e.to_string())
+}
+
+/// Tauri command: selects which backend (`"encrypted_file"`/`"keychain"`)
+/// subsequent secret reads/writes use, and persists the choice so it
+/// survives a restart. This is the Connections screen's key-storage picker
+/// (`controls/connections.json`'s `key-storage-*` controls) -- see the
+/// module docs' "The `secrets_set` name" section for why this command (and
+/// not the per-connection key setter) owns the literal `secrets_set` name.
+#[tauri::command]
+pub fn secrets_set(
+    store: tauri::State<'_, SecretStore>,
+    settings: tauri::State<'_, SettingsStore>,
+    location: String,
+) -> Result<(), String> {
+    set_storage_backend(&store, &settings, StorageBackend::parse(&location))
+        .map_err(|e| e.to_string())
 }
 
 /// Fetches the stored key for `connection_id`, if any. Deliberately *not* a
@@ -447,6 +488,7 @@ pub fn secrets_get(store: &SecretStore, connection_id: &str) -> Result<Option<St
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
+    use tauri::Manager;
 
     /// Minimal RAII temp-dir guard (mirrors `connections.rs`'s
     /// `TempDbPath`): a process- and test-unique directory under the OS
@@ -713,6 +755,65 @@ mod tests {
         assert_eq!(
             secrets_get(&store, "conn-1").unwrap(),
             Some("sk-free-fn".to_string())
+        );
+    }
+
+    // ── secrets_set_key / secrets_delete / secrets_set commands (B23) ──
+    //
+    // Built through a real (if minimal) `MockRuntime` app rather than
+    // constructing `tauri::State` by hand -- `State`'s inner reference is
+    // private to the `tauri` crate, so a managed app is the only way to get
+    // one from outside it (mirrors `tray.rs`'s `managed_app` pattern).
+
+    fn managed_app_with_secret_store(dir: &Path) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .expect("failed to build mock app");
+        app.manage(SecretStore::open(dir).expect("failed to open secret store"));
+        app.manage(SettingsStore::open_in_memory().expect("failed to open in-memory settings"));
+        app
+    }
+
+    #[test]
+    fn secrets_set_key_command_persists_through_the_active_backend() {
+        let dir = TempDir::new("cmd-set-key");
+        let app = managed_app_with_secret_store(&dir.0);
+
+        secrets_set_key(app.state(), "conn-1".to_string(), "sk-cmd".to_string()).unwrap();
+
+        assert_eq!(
+            app.state::<SecretStore>().get("conn-1").unwrap(),
+            Some("sk-cmd".to_string())
+        );
+    }
+
+    #[test]
+    fn secrets_delete_command_removes_the_key() {
+        let dir = TempDir::new("cmd-delete");
+        let app = managed_app_with_secret_store(&dir.0);
+        app.state::<SecretStore>().set("conn-1", "sk-cmd").unwrap();
+
+        secrets_delete(app.state(), "conn-1".to_string()).unwrap();
+
+        assert_eq!(app.state::<SecretStore>().get("conn-1").unwrap(), None);
+    }
+
+    #[test]
+    fn secrets_set_command_switches_the_storage_backend_and_persists_the_choice() {
+        let dir = TempDir::new("cmd-set-backend");
+        let app = managed_app_with_secret_store(&dir.0);
+
+        secrets_set(app.state(), app.state(), "keychain".to_string()).unwrap();
+
+        assert_eq!(
+            app.state::<SecretStore>().storage_backend(),
+            StorageBackend::Keychain
+        );
+        assert_eq!(
+            app.state::<SettingsStore>()
+                .get(STORAGE_BACKEND_SETTING_KEY)
+                .unwrap(),
+            Some("keychain".to_string())
         );
     }
 

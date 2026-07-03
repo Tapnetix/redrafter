@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tray-check-updates"
+description = "Enables the tray_check_updates command without any pre-configured scope."
+commands.allow = ["tray_check_updates"]
+
+[[permission]]
+identifier = "deny-tray-check-updates"
+description = "Denies the tray_check_updates command without any pre-configured scope."
+commands.deny = ["tray_check_updates"]
