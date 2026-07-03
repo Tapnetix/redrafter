@@ -40,7 +40,7 @@ mod fallback_and_review_tests {
     use super::orchestrator::{
         FallbackTarget, InjectMode, Orchestrator, RefineFlow, TextCapture, TextInjector,
     };
-    use super::prompt_builder::BuildOptions;
+    use super::prompt_builder::{BuildOptions, QuoteMode};
     use anyhow::Result;
     use async_trait::async_trait;
     use llm_provider::{LlmProvider, LlmRequest, LlmResponse};
@@ -476,7 +476,7 @@ mod fallback_and_review_tests {
     }
 
     #[tokio::test]
-    async fn heuristic_quote_detection_applies_when_there_is_no_explicit_q_tag() {
+    async fn heuristic_quote_detection_applies_in_answer_only_mode_when_there_is_no_explicit_q_tag() {
         let provider = RecordingProvider::new("fake-model");
         let selection = "> On Mon, Alex wrote: any risk of slipping?\n\nwe're on track";
         let orch = Orchestrator::new(
@@ -485,7 +485,14 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, CancellationToken::new())
+        // "Answer only" (quote_mode = AnswerOnly) opts into the heuristic
+        // split; the default "Answer + quote" refines the whole selection
+        // (covered by `include_quote_mode_leaves_the_whole_selection_as_the_draft`).
+        let opts = BuildOptions {
+            quote_mode: QuoteMode::AnswerOnly,
+            ..opts("fake-model")
+        };
+        orch.refine_with(&opts, &[], InjectMode::Blind, CancellationToken::new())
             .await
             .expect("refine should succeed");
 

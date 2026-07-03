@@ -453,6 +453,8 @@ pub fn secrets_set_key(
 
 /// Tauri command: deletes the stored key for `connection_id`, if any
 /// (idempotent -- succeeds even if none was stored).
+// orphan-ok: forward-reference for Phase C connection key-cleanup; keys are
+// currently cleared via connection_remove's mirroring into SecretStore.
 #[tauri::command]
 pub fn secrets_delete(
     state: tauri::State<'_, SecretStore>,

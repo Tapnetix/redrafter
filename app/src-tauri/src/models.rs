@@ -97,6 +97,17 @@ fn save_active_ref(settings: &SettingsStore, reference: &ActiveModelRef) -> anyh
     settings.set(ACTIVE_MODEL_KEY, &serde_json::to_string(reference)?)
 }
 
+/// Resolves the persisted active-model reference (set by
+/// [`model_set_active_impl`]/`tray::tray_set_active_model`) into a plain
+/// `(connection_id, model_id)` pair for the refine command layer
+/// (`lib.rs`'s `active_provider`), or `None` when the user has never picked
+/// one. Exposed -- unlike the private [`ActiveModelRef`]/[`load_active_ref`]
+/// -- so `active_provider` can honor the user's active-model choice without
+/// duplicating the settings-key/JSON encoding this module owns.
+pub fn active_model_ref(settings: &SettingsStore) -> anyhow::Result<Option<(String, String)>> {
+    Ok(load_active_ref(settings)?.map(|r| (r.connection_id, r.model_id)))
+}
+
 fn load_favorites(settings: &SettingsStore) -> anyhow::Result<std::collections::HashSet<String>> {
     match settings.get(FAVORITE_MODELS_KEY)? {
         Some(raw) => Ok(serde_json::from_str(&raw).unwrap_or_default()),

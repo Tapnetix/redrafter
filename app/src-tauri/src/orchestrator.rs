@@ -26,7 +26,7 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::command_parser;
-use crate::prompt_builder::{self, BuildOptions};
+use crate::prompt_builder::{self, BuildOptions, QuoteMode};
 use crate::quote_parser;
 
 /// Captures the user's current text selection. A seam over
@@ -78,10 +78,12 @@ pub struct RefineOutcome {
 /// only if the primary attempt (`Orchestrator`'s own provider, with
 /// `opts.model`) fails, in the order given.
 ///
-/// The fallback list itself (which models, in what order) comes from
-/// settings/behavior config — B23 reads that and constructs this list; kept
+/// The fallback list itself (which models, in what order) comes from the
+/// Behavior screen's `behavior.on_failure`/`behavior.fallback_chain`
+/// settings; the command layer (`lib.rs`'s `resolve_fallback_targets`) reads
+/// those and constructs this list when on-failure is set to "fallback". Kept
 /// as a plain data seam here so the chain-walking logic is trivial to unit
-/// test with fakes, independent of how B23 sources it.
+/// test with fakes, independent of how the command layer sources it.
 pub struct FallbackTarget {
     pub provider: Arc<dyn LlmProvider>,
     pub model: String,
@@ -137,16 +139,19 @@ impl RefineFlow {
 }
 
 /// Parses `original`'s inline commands (B4's `command_parser`) and resolves
-/// its quoted context — an explicit `/q` tag if present, otherwise
-/// `quote_parser`'s heuristic detection — into the text to actually refine
-/// (`draft`) plus a [`BuildOptions`] with `direction`/`quote`/`lang`
-/// resolved (a parsed tag overrides the corresponding field already set on
-/// `opts`, e.g. a settings-configured default direction; `model`/
-/// `temperature`/`max_tokens` are untouched, since those aren't tag-driven).
+/// its quoted context — an explicit `/q` tag if present, otherwise the
+/// Behavior screen's `quote_mode` decides whether to run `quote_parser`'s
+/// heuristic detection ([`QuoteMode::AnswerOnly`]) or leave the selection
+/// whole ([`QuoteMode::IncludeQuote`]/[`QuoteMode::LetDirectionDecide`]) —
+/// into the text to actually refine (`draft`) plus a [`BuildOptions`] with
+/// `direction`/`quote`/`lang` resolved (a parsed tag overrides the
+/// corresponding field already set on `opts`, e.g. a settings-configured
+/// default direction; `model`/`temperature`/`max_tokens`/`quote_mode` are
+/// untouched, since those aren't tag-driven).
 ///
 /// With no tags at all, `command_parser::parse` returns the trimmed
-/// selection as `message` and everything else `None`, so this is a no-op
-/// over `opts` — the pre-B5 default-direction behavior is unchanged.
+/// selection as `message` and everything else `None`, so `direction`/`lang`
+/// are a no-op over `opts`; only `quote`/`draft` depend on `quote_mode`.
 ///
 /// A plain function of its inputs (no `&self`, no I/O) so it's trivial to
 /// unit test on its own, independent of the async model-calling machinery.
@@ -154,8 +159,16 @@ fn resolve_prompt(original: &str, opts: &BuildOptions) -> (String, BuildOptions)
     let parsed = command_parser::parse(original);
 
     let (quote, draft) = match parsed.quote {
+        // An explicit `/q` tag always wins, regardless of `quote_mode`.
         Some(explicit_quote) => (Some(explicit_quote), parsed.message),
-        None => quote_parser::split(&parsed.message),
+        None => match opts.quote_mode {
+            // "Answer only": strip the heuristically-detected quote out and
+            // refine only the user's own words.
+            QuoteMode::AnswerOnly => quote_parser::split(&parsed.message),
+            // "Answer + quote" / "Let /rd decide": don't auto-strip — the
+            // whole selection is the draft, no heuristic quote separation.
+            QuoteMode::IncludeQuote | QuoteMode::LetDirectionDecide => (None, parsed.message),
+        },
     };
 
     let resolved = BuildOptions {
@@ -165,6 +178,7 @@ fn resolve_prompt(original: &str, opts: &BuildOptions) -> (String, BuildOptions)
         max_tokens: opts.max_tokens,
         quote: quote.or_else(|| opts.quote.clone()),
         lang: parsed.lang.or_else(|| opts.lang.clone()),
+        quote_mode: opts.quote_mode,
     };
 
     (draft, resolved)
@@ -377,5 +391,72 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
             anyhow::bail!("no refine result pending review");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A selection with an unambiguous quoted reply block plus the user's
+    /// own draft line -- the heuristic splitter (`quote_parser::split`)
+    /// detects the quote here.
+    const QUOTED_SELECTION: &str =
+        "> On Mon, Alex wrote: any risk of slipping?\n\nWe're on track, shipping Monday.";
+
+    fn opts_with_quote_mode(quote_mode: QuoteMode) -> BuildOptions {
+        BuildOptions {
+            model: "fake-model".to_string(),
+            quote_mode,
+            ..BuildOptions::default()
+        }
+    }
+
+    #[test]
+    fn answer_only_quote_mode_splits_the_detected_quote_out_of_the_draft() {
+        let (draft, resolved) =
+            resolve_prompt(QUOTED_SELECTION, &opts_with_quote_mode(QuoteMode::AnswerOnly));
+
+        // Only the user's own words remain in the draft; the quoted reply is
+        // pulled out as reference-only context.
+        assert_eq!(draft, "We're on track, shipping Monday.");
+        assert_eq!(
+            resolved.quote.as_deref(),
+            Some("> On Mon, Alex wrote: any risk of slipping?")
+        );
+    }
+
+    #[test]
+    fn include_quote_mode_leaves_the_whole_selection_as_the_draft() {
+        let (draft, resolved) =
+            resolve_prompt(QUOTED_SELECTION, &opts_with_quote_mode(QuoteMode::IncludeQuote));
+
+        // No heuristic split: the whole selection is refined, no quote pulled
+        // out.
+        assert_eq!(draft, QUOTED_SELECTION);
+        assert_eq!(resolved.quote, None);
+    }
+
+    #[test]
+    fn let_direction_decide_quote_mode_also_skips_the_heuristic_split() {
+        let (draft, resolved) = resolve_prompt(
+            QUOTED_SELECTION,
+            &opts_with_quote_mode(QuoteMode::LetDirectionDecide),
+        );
+
+        assert_eq!(draft, QUOTED_SELECTION);
+        assert_eq!(resolved.quote, None);
+    }
+
+    #[test]
+    fn an_explicit_q_tag_wins_over_the_quote_mode() {
+        // Even in a mode that would otherwise skip the heuristic split, an
+        // explicit `/q` tag is always honored.
+        let selection = "/q previous thread context /m my actual draft";
+        let (draft, resolved) =
+            resolve_prompt(selection, &opts_with_quote_mode(QuoteMode::IncludeQuote));
+
+        assert_eq!(resolved.quote.as_deref(), Some("previous thread context"));
+        assert_eq!(draft, "my actual draft");
     }
 }

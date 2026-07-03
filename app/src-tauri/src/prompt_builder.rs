@@ -20,6 +20,27 @@ and clarity. Preserve the author's voice, tone, and overall length — this is a
 rewrite. Do not summarize or change the meaning. Reply with only the corrected text: no \
 commentary, preamble, or surrounding quotation marks.";
 
+/// How a selection's quoted context is handled when there's no explicit
+/// `/q` tag — the Behavior screen's "When the selection has a quote"
+/// setting (`behavior.quote_mode`), threaded in by the command layer
+/// (`lib.rs`) and consumed by `orchestrator::resolve_prompt`. An explicit
+/// `/q` tag always wins regardless of this mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuoteMode {
+    /// "Answer only" (`answer`): heuristically split any detected quoted
+    /// context out of the selection and refine only the user's own words,
+    /// folding the quote in as reference-only context.
+    AnswerOnly,
+    /// "Answer + quote" (`answer_quote`): don't auto-strip — refine the
+    /// whole selection as one draft. The Behavior screen's default.
+    #[default]
+    IncludeQuote,
+    /// "Let /rd decide" (`rd`): don't auto-strip either; leave any quote
+    /// handling to the direction/`/rd` instruction rather than the
+    /// heuristic splitter.
+    LetDirectionDecide,
+}
+
 /// Options controlling how a refine prompt is assembled.
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
@@ -43,6 +64,11 @@ pub struct BuildOptions {
     /// Target output language (e.g. `"de"`), from a `/lang` tag. `None`
     /// leaves the model to respond in the input's own language.
     pub lang: Option<String>,
+    /// How to treat a heuristically-detected quote when there's no explicit
+    /// `/q` tag (Behavior/`behavior.quote_mode`). Only read by
+    /// `orchestrator::resolve_prompt`; ignored by [`build`] itself, which
+    /// only cares about the already-resolved [`BuildOptions::quote`].
+    pub quote_mode: QuoteMode,
 }
 
 impl Default for BuildOptions {
@@ -54,6 +80,7 @@ impl Default for BuildOptions {
             max_tokens: None,
             quote: None,
             lang: None,
+            quote_mode: QuoteMode::default(),
         }
     }
 }

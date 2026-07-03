@@ -57,10 +57,11 @@ use models::{
     model_disable, model_set_active, model_toggle_favorite, models_list, ollama_pull,
 };
 use orchestrator::{
-    InjectMode, Orchestrator, RefineFlow, RefineOutcome, SystemTextIo, TextCapture, TextInjector,
+    FallbackTarget, InjectMode, Orchestrator, RefineFlow, RefineOutcome, SystemTextIo, TextCapture,
+    TextInjector,
 };
 use permission::{permission_open_settings, permission_status, AccessibilityChecker};
-use prompt_builder::BuildOptions;
+use prompt_builder::{BuildOptions, QuoteMode};
 use secrets::{secrets_delete, secrets_set, secrets_set_key, SecretStore};
 use settings::{settings_get, settings_set, SettingsStore};
 use tray::{
@@ -87,6 +88,20 @@ const DEFAULT_DIRECTION_KEY: &str = "refine.default_direction";
 /// Behavior/B6). Unset or any other value defaults to
 /// [`InjectMode::Blind`] -- Phase A's only behavior.
 const INJECT_MODE_KEY: &str = "behavior.inject_mode";
+/// Settings key for the quote-handling mode (`"answer"`/`"answer_quote"`/
+/// `"rd"`, Behavior/B6b's `behavior.quote_mode`). Unset or any other value
+/// defaults to [`QuoteMode`]'s default (`IncludeQuote`), matching the
+/// Behavior screen's own default selection.
+const QUOTE_MODE_KEY: &str = "behavior.quote_mode";
+/// Settings key for the on-failure strategy (`"notify"`/`"fallback"`,
+/// Behavior/B6b's `behavior.on_failure`). Only `"fallback"` engages the
+/// configured [`FALLBACK_CHAIN_KEY`]; anything else runs with no fallbacks.
+const ON_FAILURE_KEY: &str = "behavior.on_failure";
+/// Settings key for the ordered fallback chain (Behavior/B6b's
+/// `behavior.fallback_chain`): a JSON array of model-id strings (e.g.
+/// `["gpt-5.1", "qwen3:8b"]`), each resolved to a connection that has it
+/// enabled. Only consulted when [`ON_FAILURE_KEY`] is `"fallback"`.
+const FALLBACK_CHAIN_KEY: &str = "behavior.fallback_chain";
 /// Settings key `tray_pause`/`tray_resume` (B17/B23) persist the paused flag
 /// under; also read by [`run_refine`]'s paused gate. Shared with the
 /// frontend's own `Tray.tsx`, which persists/reads the same key name.
@@ -105,30 +120,134 @@ pub struct RefineState {
     pending_review: Mutex<Option<RefineOutcome>>,
 }
 
-/// Picks the connection/model to refine with: the first stored connection
-/// that has at least one enabled model. Phase B's Models screen (B8)/tray
-/// (B9) let the user choose a specific active model; until B23 wires that
-/// preference in here too, this remains the whole app's default provider
-/// selection (first enabled model found).
+/// Picks the connection/model to refine with, honoring the user's active-
+/// model choice (Models screen/B8, tray/B9 — persisted as an
+/// `ActiveModelRef` under the `active_model` setting via
+/// `models::model_set_active`/`tray::tray_set_active_model`):
 ///
-/// Resolves the connection's API key via `connections::resolve_api_key`
-/// (secure storage first, the plaintext DB column as fallback -- B23's
-/// reconciliation of B7b/B10) and builds the vendor-appropriate provider via
-/// `connections::provider_for`, rather than always assuming an
-/// OpenAI-compatible endpoint with no key.
+///   - **Active model set**: resolve its connection + model. If that model
+///     is still enabled on that connection, build the vendor-native provider
+///     for it. If the active ref points at a connection/model that no longer
+///     exists or has been disabled/removed, reject with
+///     [`NO_ACTIVE_MODEL_ERROR`] (routing the user to pick another) rather
+///     than silently substituting a different model — this is the real
+///     backend half of the Models screen's "active model unavailable" state
+///     (S26/B21).
+///   - **Active model unset** (the default before the user has ever chosen
+///     one): fall back to the first stored connection that has at least one
+///     enabled model, using its first enabled model.
+///
+/// Either way, resolves the connection's API key via
+/// `connections::resolve_api_key` (secure storage first, the plaintext DB
+/// column as fallback -- B23's reconciliation of B7b/B10) and builds the
+/// vendor-appropriate provider via `connections::provider_for`, rather than
+/// always assuming an OpenAI-compatible endpoint with no key.
 fn active_provider(
     connections: &ConnectionStore,
+    settings: &SettingsStore,
     secrets: &SecretStore,
 ) -> Result<(Arc<dyn llm_provider::LlmProvider>, String), String> {
-    let stored = connections.list().map_err(|e| e.to_string())?;
-    let connection = stored
-        .into_iter()
-        .find(|c| !c.enabled_models.is_empty())
-        .ok_or_else(|| NO_ACTIVE_MODEL_ERROR.to_string())?;
-    let model = connection.enabled_models[0].clone();
-    let api_key = resolve_api_key(connections, secrets, &connection.id).map_err(|e| e.to_string())?;
-    let provider = connections::provider_for(&connection.provider_kind, &connection.base_url, &api_key);
+    match models::active_model_ref(settings).map_err(|e| e.to_string())? {
+        Some((connection_id, model_id)) => {
+            // The user picked a specific model: use exactly that one, or
+            // reject if it's no longer enabled/available (disabled/removed).
+            let connection = connections
+                .get(&connection_id)
+                .map_err(|e| e.to_string())?
+                .filter(|c| c.enabled_models.contains(&model_id))
+                .ok_or_else(|| NO_ACTIVE_MODEL_ERROR.to_string())?;
+            build_provider(connections, secrets, &connection, model_id)
+        }
+        None => {
+            // No active model chosen yet: default to the first connection
+            // with an enabled model (Phase B's pre-active-model behavior).
+            let stored = connections.list().map_err(|e| e.to_string())?;
+            let connection = stored
+                .into_iter()
+                .find(|c| !c.enabled_models.is_empty())
+                .ok_or_else(|| NO_ACTIVE_MODEL_ERROR.to_string())?;
+            let model = connection.enabled_models[0].clone();
+            build_provider(connections, secrets, &connection, model)
+        }
+    }
+}
+
+/// Resolves `connection`'s API key (secure storage first, plaintext DB
+/// column as fallback) and builds its vendor-native provider paired with
+/// `model` — the shared tail of [`active_provider`]'s two branches and each
+/// [`FallbackTarget`] built by [`resolve_fallback_targets`].
+fn build_provider(
+    connections: &ConnectionStore,
+    secrets: &SecretStore,
+    connection: &connections::Connection,
+    model: String,
+) -> Result<(Arc<dyn llm_provider::LlmProvider>, String), String> {
+    let api_key =
+        resolve_api_key(connections, secrets, &connection.id).map_err(|e| e.to_string())?;
+    let provider =
+        connections::provider_for(&connection.provider_kind, &connection.base_url, &api_key);
     Ok((Arc::from(provider), model))
+}
+
+/// Builds the ordered fallback chain the orchestrator should try when the
+/// primary model call fails, from the Behavior screen's
+/// `behavior.on_failure`/`behavior.fallback_chain` settings (B6b):
+///
+///   - Unless on-failure is set to `"fallback"`, returns an empty list (the
+///     `"notify"` default — fail loudly, inject nothing, no fallback).
+///   - Otherwise parses `behavior.fallback_chain` (a JSON array of model-id
+///     strings, exactly what `Behavior.tsx` writes) and resolves each id to
+///     the first stored connection that has it enabled, building that
+///     connection's vendor-native provider. Ids that match no enabled
+///     connection are skipped (a best-effort chain — an unresolvable entry
+///     shouldn't abort the whole refine).
+///
+/// forward-ref: `behavior.retry_count` (also written by `Behavior.tsx`) has
+/// no orchestrator retry concept to consume yet — the chain tries each model
+/// once. Wiring per-model retries is Phase C scope; the setting is read
+/// there once that loop exists.
+fn resolve_fallback_targets(
+    connections: &ConnectionStore,
+    settings: &SettingsStore,
+    secrets: &SecretStore,
+) -> Result<Vec<FallbackTarget>, String> {
+    let on_failure = settings.get(ON_FAILURE_KEY).map_err(|e| e.to_string())?;
+    if on_failure.as_deref() != Some("fallback") {
+        return Ok(Vec::new());
+    }
+
+    let model_ids: Vec<String> = match settings.get(FALLBACK_CHAIN_KEY).map_err(|e| e.to_string())? {
+        Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    let stored = connections.list().map_err(|e| e.to_string())?;
+    let mut targets = Vec::new();
+    for model_id in model_ids {
+        if let Some(connection) = stored
+            .iter()
+            .find(|c| c.enabled_models.contains(&model_id))
+        {
+            let (provider, model) =
+                build_provider(connections, secrets, connection, model_id.clone())?;
+            targets.push(FallbackTarget::new(provider, model));
+        }
+    }
+    Ok(targets)
+}
+
+/// Reads the configured quote-handling mode (Behavior/B6b's
+/// `behavior.quote_mode` setting) as a [`QuoteMode`], defaulting to
+/// [`QuoteMode`]'s own default when unset or unrecognized (matching the
+/// Behavior screen's default selection).
+fn quote_mode_from_settings(settings: &SettingsStore) -> Result<QuoteMode, String> {
+    let raw = settings.get(QUOTE_MODE_KEY).map_err(|e| e.to_string())?;
+    Ok(match raw.as_deref() {
+        Some("answer") => QuoteMode::AnswerOnly,
+        Some("answer_quote") => QuoteMode::IncludeQuote,
+        Some("rd") => QuoteMode::LetDirectionDecide,
+        _ => QuoteMode::default(),
+    })
 }
 
 /// Reads the configured inject mode (Behavior/B6's `behavior.inject_mode`
@@ -191,6 +310,7 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
     settings: &SettingsStore,
     model: String,
     provider: Arc<dyn llm_provider::LlmProvider>,
+    fallbacks: Vec<FallbackTarget>,
     capture: C,
     injector: I,
 ) -> Result<RefineFlow, String> {
@@ -198,9 +318,11 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
         .get(DEFAULT_DIRECTION_KEY)
         .map_err(|e| e.to_string())?;
     let mode = inject_mode_from_settings(settings)?;
+    let quote_mode = quote_mode_from_settings(settings)?;
     let opts = BuildOptions {
         direction,
         model,
+        quote_mode,
         ..BuildOptions::default()
     };
 
@@ -209,7 +331,7 @@ async fn execute_refine<C: TextCapture, I: TextInjector>(
 
     let orch = Orchestrator::new(capture, injector, provider);
     let flow = orch
-        .refine_with(&opts, &[], mode, cancel)
+        .refine_with(&opts, &fallbacks, mode, cancel)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -240,7 +362,8 @@ pub(crate) async fn run_refine<R: tauri::Runtime>(
 
     let connections = app.state::<ConnectionStore>();
     let secrets = app.state::<SecretStore>();
-    let (provider, model) = active_provider(&connections, &secrets)?;
+    let (provider, model) = active_provider(&connections, &settings, &secrets)?;
+    let fallbacks = resolve_fallback_targets(&connections, &settings, &secrets)?;
 
     let refine_state = app.state::<RefineState>();
     execute_refine(
@@ -248,6 +371,7 @@ pub(crate) async fn run_refine<R: tauri::Runtime>(
         &settings,
         model,
         provider,
+        fallbacks,
         SystemTextIo,
         SystemTextIo,
     )
@@ -498,6 +622,10 @@ mod tests {
         ConnectionStore::open_in_memory().expect("failed to open in-memory connections")
     }
 
+    fn new_settings() -> SettingsStore {
+        SettingsStore::open_in_memory().expect("failed to open in-memory settings")
+    }
+
     /// Minimal RAII temp-dir guard for a `SecretStore` in tests (mirrors
     /// `secrets.rs`'s/`connections.rs`'s own `TempDir` helpers -- `SecretStore`
     /// has no `open_in_memory`, only a file-backed `open`).
@@ -529,16 +657,18 @@ mod tests {
     #[test]
     fn active_provider_errs_when_no_connection_has_an_enabled_model() {
         let connections = new_connections();
+        let settings = new_settings();
         let (secrets, _dir) = new_secrets("no-enabled-model");
         assert_eq!(
-            active_provider(&connections, &secrets).err(),
+            active_provider(&connections, &settings, &secrets).err(),
             Some(NO_ACTIVE_MODEL_ERROR.to_string())
         );
     }
 
     #[test]
-    fn active_provider_returns_the_first_connection_with_an_enabled_model() {
+    fn active_provider_defaults_to_the_first_enabled_model_when_none_is_active() {
         let connections = new_connections();
+        let settings = new_settings();
         let (secrets, _dir) = new_secrets("first-enabled-model");
         // No enabled models yet -> skipped by `active_provider`.
         connections
@@ -553,9 +683,78 @@ mod tests {
             )
             .unwrap();
 
-        let (_, model) =
-            active_provider(&connections, &secrets).expect("should find an enabled model");
+        // With no persisted `active_model`, `active_provider` falls back to
+        // the first connection that has an enabled model.
+        let (_, model) = active_provider(&connections, &settings, &secrets)
+            .expect("should find an enabled model");
         assert_eq!(model, "llama3");
+    }
+
+    #[test]
+    fn active_provider_uses_exactly_the_persisted_active_model() {
+        let connections = new_connections();
+        let settings = new_settings();
+        let (secrets, _dir) = new_secrets("active-model-set");
+        // Two connections, each with an enabled model. The *first* is what
+        // the old (buggy) "first enabled model" logic would have picked.
+        connections
+            .add(
+                "openai",
+                "https://api.openai.com",
+                Some("sk"),
+                &["gpt-5.1".to_string()],
+            )
+            .unwrap();
+        let anthropic = connections
+            .add(
+                "anthropic",
+                "https://api.anthropic.com",
+                Some("sk-ant"),
+                &["claude-opus-4-6".to_string()],
+            )
+            .unwrap();
+        // The user picks the *second* connection's model as active.
+        models::model_set_active_impl(&connections, &settings, &anthropic.id, "claude-opus-4-6")
+            .unwrap();
+
+        let (provider, model) = active_provider(&connections, &settings, &secrets)
+            .expect("should resolve the persisted active model");
+
+        assert_eq!(model, "claude-opus-4-6");
+        // ...and its connection's vendor-native provider, not the first
+        // connection's OpenAI-compatible one.
+        assert_eq!(
+            provider.provider_name(),
+            llm_provider::AnthropicProvider::new("x", "y").provider_name()
+        );
+    }
+
+    #[test]
+    fn active_provider_errs_when_the_active_model_is_no_longer_enabled() {
+        let connections = new_connections();
+        let settings = new_settings();
+        let (secrets, _dir) = new_secrets("active-model-disabled");
+        let anthropic = connections
+            .add(
+                "anthropic",
+                "https://api.anthropic.com",
+                Some("sk-ant"),
+                &["claude-opus-4-6".to_string()],
+            )
+            .unwrap();
+        // Pick it active, then disable it (leaving the active ref stale --
+        // exactly the S26 "active model unavailable" case).
+        models::model_set_active_impl(&connections, &settings, &anthropic.id, "claude-opus-4-6")
+            .unwrap();
+        models::model_disable_impl(&connections, &settings, &anthropic.id, "claude-opus-4-6")
+            .unwrap();
+
+        // It must NOT silently substitute another enabled model -- it must
+        // route the user to pick one via `NO_ACTIVE_MODEL_ERROR`.
+        assert_eq!(
+            active_provider(&connections, &settings, &secrets).err(),
+            Some(NO_ACTIVE_MODEL_ERROR.to_string())
+        );
     }
 
     /// Boundary test for the B7b/B10 reconciliation: a connection whose key
@@ -566,6 +765,7 @@ mod tests {
     #[test]
     fn active_provider_resolves_the_key_through_secure_storage() {
         let connections = new_connections();
+        let settings = new_settings();
         let (secrets, _dir) = new_secrets("active-provider-secure-key");
         let anthropic = connections
             .add(
@@ -577,8 +777,8 @@ mod tests {
             .unwrap();
         secrets.set(&anthropic.id, "sk-ant-secure").unwrap();
 
-        let (provider, model) =
-            active_provider(&connections, &secrets).expect("should find the anthropic connection");
+        let (provider, model) = active_provider(&connections, &settings, &secrets)
+            .expect("should find the anthropic connection");
 
         assert_eq!(model, "claude-opus-4-6");
         // `provider_for` picks the vendor-native implementation, not always
@@ -754,6 +954,7 @@ mod tests {
             &settings,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
+            Vec::new(),
             FakeCapture("original text".to_string()),
             injector.clone(),
         )
@@ -792,6 +993,7 @@ mod tests {
             &settings,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
+            Vec::new(),
             FakeCapture("original text".to_string()),
             injector.clone(),
         )
@@ -822,6 +1024,7 @@ mod tests {
             &settings,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
+            Vec::new(),
             FakeCapture("original text".to_string()),
             injector.clone(),
         )
@@ -855,6 +1058,7 @@ mod tests {
             &settings,
             "fake-model".to_string(),
             Arc::new(FakeProvider("refined text".to_string())),
+            Vec::new(),
             FakeCapture("original text".to_string()),
             injector,
         )
@@ -865,6 +1069,185 @@ mod tests {
         inject_text_impl(&refine_state, "refined text").expect("inject should succeed on macOS");
 
         assert_eq!(refine_state.pending_review.lock().unwrap().clone(), None);
+    }
+
+    /// A provider whose `chat` always fails -- lets a test drive the
+    /// orchestrator's fallback chain (primary fails -> a fallback target
+    /// succeeds) without a live network call.
+    struct FailingProvider;
+
+    #[async_trait]
+    impl LlmProvider for FailingProvider {
+        async fn chat(
+            &self,
+            _request: &LlmRequest,
+            _cancel: CancellationToken,
+        ) -> AnyResult<LlmResponse> {
+            anyhow::bail!("primary provider is down")
+        }
+
+        async fn list_models(&self) -> AnyResult<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn is_available(&self) -> bool {
+            false
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "failing"
+        }
+    }
+
+    /// Boundary test for Issue 2: when a fallback list is configured,
+    /// `execute_refine` actually forwards it to the orchestrator -- so a
+    /// primary failure is caught by a configured fallback and *that* model's
+    /// output is injected (rather than the whole refine failing, as it did
+    /// while the fallback slice was hard-coded empty).
+    #[tokio::test]
+    async fn execute_refine_forwards_the_fallback_chain_to_the_orchestrator() {
+        let refine_state = RefineState::default();
+        let settings = new_settings();
+        let injector = FakeInjector::default();
+
+        let fallbacks = vec![FallbackTarget::new(
+            Arc::new(FakeProvider("fallback output".to_string())),
+            "fallback-model".to_string(),
+        )];
+
+        let flow = execute_refine(
+            &refine_state,
+            &settings,
+            "primary-model".to_string(),
+            Arc::new(FailingProvider),
+            fallbacks,
+            FakeCapture("original text".to_string()),
+            injector.clone(),
+        )
+        .await
+        .expect("the fallback should rescue the failed primary");
+
+        // The fallback's output was injected -- proving execute_refine passed
+        // the non-empty fallback list through to `refine_with`.
+        assert_eq!(injector.injected(), vec!["fallback output".to_string()]);
+        assert_eq!(flow.into_outcome().refined, "fallback output");
+    }
+
+    /// Boundary test for Issue 2's resolution half: `resolve_fallback_targets`
+    /// reads `behavior.on_failure`/`behavior.fallback_chain` and resolves the
+    /// configured model ids to real, vendor-native `FallbackTarget`s (via
+    /// `provider_for` + `resolve_api_key`), in the configured order.
+    #[test]
+    fn resolve_fallback_targets_builds_a_resolved_chain_from_the_behavior_settings() {
+        let connections = new_connections();
+        let settings = new_settings();
+        let (secrets, _dir) = new_secrets("resolve-fallback");
+        connections
+            .add(
+                "openai",
+                "https://api.openai.com",
+                Some("sk"),
+                &["gpt-5.1".to_string()],
+            )
+            .unwrap();
+        connections
+            .add(
+                "ollama",
+                "http://localhost:11434",
+                None,
+                &["qwen3:8b".to_string()],
+            )
+            .unwrap();
+        settings.set(ON_FAILURE_KEY, "fallback").unwrap();
+        settings
+            .set(FALLBACK_CHAIN_KEY, r#"["qwen3:8b","gpt-5.1"]"#)
+            .unwrap();
+
+        let targets = resolve_fallback_targets(&connections, &settings, &secrets)
+            .expect("resolution should succeed");
+
+        assert_eq!(targets.len(), 2);
+        // Order is preserved (Ollama first, as configured), and each target
+        // carries its vendor-native provider.
+        assert_eq!(targets[0].model, "qwen3:8b");
+        assert_eq!(
+            targets[0].provider.provider_name(),
+            llm_provider::OllamaProvider::new("x").provider_name()
+        );
+        assert_eq!(targets[1].model, "gpt-5.1");
+    }
+
+    #[test]
+    fn resolve_fallback_targets_is_empty_unless_on_failure_is_fallback() {
+        let connections = new_connections();
+        let settings = new_settings();
+        let (secrets, _dir) = new_secrets("resolve-fallback-notify");
+        connections
+            .add(
+                "openai",
+                "https://api.openai.com",
+                Some("sk"),
+                &["gpt-5.1".to_string()],
+            )
+            .unwrap();
+        // A chain is configured, but on-failure is the default "notify".
+        settings.set(ON_FAILURE_KEY, "notify").unwrap();
+        settings.set(FALLBACK_CHAIN_KEY, r#"["gpt-5.1"]"#).unwrap();
+
+        let targets = resolve_fallback_targets(&connections, &settings, &secrets).unwrap();
+        assert!(targets.is_empty(), "notify mode must not build a fallback chain");
+    }
+
+    #[test]
+    fn resolve_fallback_targets_skips_ids_no_enabled_connection_has() {
+        let connections = new_connections();
+        let settings = new_settings();
+        let (secrets, _dir) = new_secrets("resolve-fallback-skip");
+        connections
+            .add(
+                "openai",
+                "https://api.openai.com",
+                Some("sk"),
+                &["gpt-5.1".to_string()],
+            )
+            .unwrap();
+        settings.set(ON_FAILURE_KEY, "fallback").unwrap();
+        // "no-such-model" matches no enabled connection -> skipped.
+        settings
+            .set(FALLBACK_CHAIN_KEY, r#"["no-such-model","gpt-5.1"]"#)
+            .unwrap();
+
+        let targets = resolve_fallback_targets(&connections, &settings, &secrets).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].model, "gpt-5.1");
+    }
+
+    // ---- quote_mode_from_settings ----
+
+    #[test]
+    fn quote_mode_from_settings_defaults_when_unset() {
+        let settings = new_settings();
+        assert_eq!(
+            quote_mode_from_settings(&settings),
+            Ok(QuoteMode::default())
+        );
+    }
+
+    #[test]
+    fn quote_mode_from_settings_reads_each_configured_value() {
+        let settings = new_settings();
+        settings.set(QUOTE_MODE_KEY, "answer").unwrap();
+        assert_eq!(quote_mode_from_settings(&settings), Ok(QuoteMode::AnswerOnly));
+        settings.set(QUOTE_MODE_KEY, "answer_quote").unwrap();
+        assert_eq!(
+            quote_mode_from_settings(&settings),
+            Ok(QuoteMode::IncludeQuote)
+        );
+        settings.set(QUOTE_MODE_KEY, "rd").unwrap();
+        assert_eq!(
+            quote_mode_from_settings(&settings),
+            Ok(QuoteMode::LetDirectionDecide)
+        );
     }
 
     // ---- inject_mode_from_settings ----
