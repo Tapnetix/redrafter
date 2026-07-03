@@ -72,6 +72,14 @@ pipeline {
 
                 stage('macOS') {
                     agent { label 'macos' }
+                    // The macOS agents share the chronically-flaky remoting link
+                    // that drops mid-build (AgentOfflineException / "Connection was
+                    // broken"). Retry on agent loss so a transient disconnect
+                    // re-runs the stage on a reconnected agent instead of aborting
+                    // the whole run — mirrors the Windows stage's resilience.
+                    options {
+                        retry(count: 2, conditions: [agent(), nonresumable()])
+                    }
                     environment {
                         PATH = "/Users/jenkins/Library/Python/3.9/bin:/Users/jenkins/.local/bin:/Users/jenkins/.cargo/bin:/Users/jenkins/.nvm/versions/node/v24.14.0/bin:/Users/jenkins/.nvm/versions/node/v24.14.1/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
                     }
@@ -303,6 +311,16 @@ pipeline {
 
                 stage('E2E Tests (macOS)') {
                     agent { label 'macos' }
+                    // The macOS agent is the flakiest link in the fleet — its
+                    // remoting channel drops mid-build repeatedly. Retry on agent
+                    // loss so a disconnect re-runs on a reconnected agent rather
+                    // than aborting the whole run. E2E here is a real-surface
+                    // quality signal (D4); the release artifacts come from the
+                    // Linux/macOS/Windows package stages, so a persistently-down
+                    // agent should not sink them.
+                    options {
+                        retry(count: 2, conditions: [agent(), nonresumable()])
+                    }
                     environment {
                         NVM_DIR = '/Users/jenkins/.nvm'
                         PATH = "/Users/jenkins/.cargo/bin:/Users/jenkins/.nvm/versions/node/v24.14.0/bin:/Users/jenkins/.nvm/versions/node/v24.14.1/bin:/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
