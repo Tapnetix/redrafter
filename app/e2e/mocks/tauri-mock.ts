@@ -244,10 +244,13 @@ export function getTauriMockScript(data: TestData): string {
           case 'secrets_set':
             return null;
 
-          // ── Model curation and active selection (B8), used by Models ──
+          // ── Model curation and active selection (B8), used by Models;
+          // \`tray_set_active_model\` (B9) shares the same active-model state
+          // via the menu-bar tray's own entry point ──
           case 'models_list':
             return buildModelsList();
-          case 'model_set_active': {
+          case 'model_set_active':
+          case 'tray_set_active_model': {
             const connectionId = args && args.connectionId;
             const modelId = args && args.modelId;
             const connection = findConnection(connectionId);

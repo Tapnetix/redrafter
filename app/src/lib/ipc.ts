@@ -244,6 +244,18 @@ export function modelToggleFavorite(args: ModelRefArgs): Promise<ModelsListResul
   return invoke<ModelsListResult>('model_toggle_favorite', args);
 }
 
+/**
+ * Sets the active model from the menu-bar tray's quick-switch (`Tray.tsx`,
+ * B9) — favorites or the expanded per-provider list. Same shape and guard
+ * (rejects a model that isn't enabled) as `modelSetActive`, but a distinct
+ * backend command (`tray_set_active_model`, per `controls/tray.json`) so
+ * the native OS tray menu (B23/tray.rs) and this in-app preview both call
+ * through the tray's own entry point rather than the Models screen's.
+ */
+export function traySetActiveModel(args: ModelRefArgs): Promise<ModelsListResult> {
+  return invoke<ModelsListResult>('tray_set_active_model', args);
+}
+
 /** Mirrors `llm-provider`'s `PullProgress` (via `models.rs`'s `ollama_pull`):
  * the terminal line of an Ollama model pull's NDJSON progress stream. */
 export interface OllamaPullProgress {
