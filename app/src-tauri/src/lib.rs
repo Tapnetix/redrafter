@@ -344,6 +344,12 @@ fn history_command_trigger(original: &str) -> Option<String> {
 /// recording — is unit-testable with fakes (`orchestrator`'s
 /// `FakeProvider`/`FakeCapture`/`FakeInjector`) instead of a live network
 /// call.
+// Pre-existing `-D warnings` blocker (unrelated to this file's own change):
+// this pipeline genuinely needs each of these seams (state, three stores,
+// the resolved model/provider/fallbacks, and the capture/inject pair) --
+// splitting them into a config struct is a larger refactor than this fix's
+// scope, so the lint is silenced here rather than worked around.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
     refine_state: &RefineState,
     settings: &SettingsStore,

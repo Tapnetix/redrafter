@@ -218,11 +218,20 @@ impl HistoryStore {
 
     /// Deletes every entry older than `max_age_days` days, measured from
     /// `now` (`None` prunes nothing -- an unset `history.retention_days`
-    /// keeps everything regardless of age).
+    /// keeps everything regardless of age; `Some(0)` -- the Behavior
+    /// screen's "session only" option -- is *also* a no-op here: it does
+    /// NOT mean "delete everything older than `now`", since `now` is read
+    /// fresh on every call and would otherwise delete the entry a refine
+    /// just appended a moment earlier. Actually clearing history at the
+    /// end of a session is a separate app-quit-hook concern, out of scope
+    /// for this per-append prune -- see [`prune`]'s doc comment).
     fn prune_by_age_at(&self, max_age_days: Option<i64>, now: i64) -> Result<()> {
         let Some(days) = max_age_days else {
             return Ok(());
         };
+        if days <= 0 {
+            return Ok(());
+        }
         self.prune_before(now - days * MILLIS_PER_DAY)
     }
 
@@ -337,12 +346,15 @@ pub fn history_clear(state: tauri::State<'_, HistoryStore>) -> Result<(), String
 /// cap mid-session.
 ///
 /// `history.retention_days = "0"` (the screen's "session only" option,
-/// which reads "history cleared on quit" in the UI copy) has no dedicated
-/// app-shutdown hook to clear on here -- pruning by a zero-day age cutoff
-/// right after every append is the closest a per-append prune gets to that:
-/// in practice, every entry from *before* the one just appended is already
-/// "older than now" and gets pruned, so the store never accumulates past
-/// the latest refine within a session either.
+/// which reads "history cleared on quit" in the UI copy) is a **no-op** for
+/// this per-append age prune -- see [`HistoryStore::prune_by_age_at`]. It
+/// must not be read as "delete everything older than `now`", since `now` is
+/// read fresh on every call and that would delete the entry this very
+/// refine just appended (its `created_at` is inevitably captured a moment
+/// earlier), leaving the History screen empty right after a successful
+/// refine. Actually clearing history at the end of a session is a
+/// dedicated app-quit-hook's job, out of scope here -- this function only
+/// ever prunes by count/age *during* the session.
 pub fn prune(store: &HistoryStore, settings: &SettingsStore) -> Result<(), String> {
     let retention_count = settings
         .get(RETENTION_COUNT_KEY)
@@ -857,6 +869,23 @@ mod tests {
         assert_eq!(store.list().unwrap().len(), 1);
     }
 
+    #[test]
+    fn prune_by_age_at_zero_days_is_a_no_op_and_does_not_wipe_the_just_recorded_entry() {
+        // `retention_days = 0` is the Behavior screen's "session only"
+        // option -- it must NOT be treated as "prune everything older than
+        // right now", or the entry a refine just appended (whose
+        // `created_at` is inevitably a little before this prune's `now`)
+        // gets deleted immediately after being recorded.
+        let store = new_store();
+        let just_appended = store
+            .append_with_timestamp("original", "refined", "gpt-5.1", None, 0)
+            .unwrap();
+
+        store.prune_by_age_at(Some(0), 100 * MILLIS_PER_DAY).unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![just_appended]);
+    }
+
     // ── prune (reads the Behavior screen's retention settings) ──
 
     fn new_settings() -> SettingsStore {
@@ -920,6 +949,31 @@ mod tests {
         prune(&store, &settings).unwrap();
 
         assert_eq!(store.list().unwrap(), vec![fresh]);
+    }
+
+    #[test]
+    fn prune_treats_retention_days_zero_as_session_only_and_does_not_wipe_the_just_recorded_entry(
+    ) {
+        // Regression test: `retention_days = "0"` ("session only" in the
+        // Behavior screen's UI copy) must not act as "delete everything
+        // older than the fresh `now` this prune call reads" -- that would
+        // delete the entry `execute_refine` just appended too (its
+        // `created_at` is captured slightly before this prune's `now`),
+        // leaving the History screen empty immediately after a successful
+        // refine.
+        let store = new_store();
+        let settings = new_settings();
+        settings.set(RETENTION_DAYS_KEY, "0").unwrap();
+        // Simulate the real-world race `execute_refine` hits: the entry's
+        // `created_at` is captured a moment *before* `prune`'s own fresh
+        // `now_millis()` read, same as a real append-then-prune call pair.
+        let just_appended = store
+            .append_with_timestamp("original", "refined", "gpt-5.1", None, now_millis() - 10)
+            .unwrap();
+
+        prune(&store, &settings).unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![just_appended]);
     }
 
     // ── resolve_connection_for_model ──
