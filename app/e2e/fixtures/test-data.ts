@@ -99,6 +99,21 @@ export interface TestData {
   /** When true, every `refine` call rejects with `refineFailure` (rather
    * than just the first), for scenarios asserting a retry that fails again. */
   refineFailureRepeats?: boolean;
+  /**
+   * Seeds the mocked `models_list`/`model_set_active`'s persisted active
+   * model (B8): the (connection, model) pair `models_list` reports as
+   * active, until `model_set_active` changes it. Leave unset to start with
+   * no active model chosen.
+   */
+  activeModel?: { connectionId: string; modelId: string };
+  /** Seeds the mocked `models_list`'s starred models (B8/B20): a list of
+   * (connection, model) pairs that start out favorited. */
+  favoriteModels?: { connectionId: string; modelId: string }[];
+  /**
+   * When set, the mocked `ollama_pull` command rejects with this message
+   * instead of resolving (B22's pull-failure state).
+   */
+  ollamaPullError?: string;
 }
 
 export const DEFAULT_TEST_DATA: TestData = {

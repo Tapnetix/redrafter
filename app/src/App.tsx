@@ -10,12 +10,12 @@
 //      the settings shell (NavRail + Sidebar chrome around the selected
 //      screen).
 //
-// The Models/Presets/History sections have no Phase A screen yet (Phase B/C);
-// their rail/sidebar nav items navigate to a "coming soon" placeholder so
-// neither is ever dead. The Capture panel is normally its own
-// hotkey-triggered overlay window (wired natively in lib.rs); here the
-// rail's implicit capture entry and the standalone /capture route stand in
-// for that trigger.
+// The Presets/History sections have no screen yet (Phase C); their
+// rail/sidebar nav items navigate to a "coming soon" placeholder so neither
+// is ever dead. Models (B8) is the first Phase B screen wired in here. The
+// Capture panel is normally its own hotkey-triggered overlay window (wired
+// natively in lib.rs); here the rail's implicit capture entry and the
+// standalone /capture route stand in for that trigger.
 
 import { useCallback, useEffect, useState } from 'react';
 import NavRail, { type Section } from '@/components/NavRail';
@@ -25,6 +25,7 @@ import FirstRun from '@/screens/FirstRun';
 import General from '@/screens/General';
 import Behavior from '@/screens/Behavior';
 import Connections from '@/screens/Connections';
+import Models from '@/screens/Models';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
 import { applyTheme, loadTheme } from '@/lib/theme';
 
@@ -87,6 +88,8 @@ function SectionView({ section, onNavigate }: { section: Section; onNavigate: (s
       return <Behavior />;
     case 'connections':
       return <Connections onNavigateToModels={() => onNavigate('models')} />;
+    case 'models':
+      return <Models onNavigateToConnections={() => onNavigate('connections')} />;
     default:
       return <ComingSoon section={section} />;
   }

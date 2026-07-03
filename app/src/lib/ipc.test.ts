@@ -13,6 +13,11 @@ import {
   connectionRefreshModels,
   modelAddManual,
   secretsSet,
+  modelsList,
+  modelSetActive,
+  modelDisable,
+  modelToggleFavorite,
+  ollamaPull,
   permissionOpenSettings,
   refine,
   restoreOriginal,
@@ -189,6 +194,59 @@ describe('ipc', () => {
 
     await secretsSet('keychain');
     expect(mockedInvoke).toHaveBeenCalledWith('secrets_set', { location: 'keychain' });
+  });
+
+  it('modelsList invokes models_list with no args and returns the curated list', async () => {
+    const list = {
+      models: [
+        { connectionId: '1', modelId: 'claude-opus-4-6', providerKind: 'anthropic', active: true, favorite: false },
+      ],
+      hasActive: true,
+      activeUnavailable: false,
+      staleActiveModelId: null,
+    };
+    mockedInvoke.mockResolvedValue(list);
+
+    await expect(modelsList()).resolves.toEqual(list);
+    expect(mockedInvoke).toHaveBeenCalledWith('models_list');
+  });
+
+  it('modelSetActive invokes model_set_active with the connection/model ids', async () => {
+    mockedInvoke.mockResolvedValue({ models: [], hasActive: true, activeUnavailable: false, staleActiveModelId: null });
+
+    await modelSetActive({ connectionId: '1', modelId: 'claude-sonnet-4-6' });
+    expect(mockedInvoke).toHaveBeenCalledWith('model_set_active', {
+      connectionId: '1',
+      modelId: 'claude-sonnet-4-6',
+    });
+  });
+
+  it('modelDisable invokes model_disable with the connection/model ids', async () => {
+    mockedInvoke.mockResolvedValue({ models: [], hasActive: false, activeUnavailable: false, staleActiveModelId: null });
+
+    await modelDisable({ connectionId: '1', modelId: 'claude-opus-4-6' });
+    expect(mockedInvoke).toHaveBeenCalledWith('model_disable', {
+      connectionId: '1',
+      modelId: 'claude-opus-4-6',
+    });
+  });
+
+  it('modelToggleFavorite invokes model_toggle_favorite with the connection/model ids', async () => {
+    mockedInvoke.mockResolvedValue({ models: [], hasActive: false, activeUnavailable: false, staleActiveModelId: null });
+
+    await modelToggleFavorite({ connectionId: '1', modelId: 'qwen3:8b' });
+    expect(mockedInvoke).toHaveBeenCalledWith('model_toggle_favorite', {
+      connectionId: '1',
+      modelId: 'qwen3:8b',
+    });
+  });
+
+  it('ollamaPull invokes ollama_pull with the model id and resolves the progress', async () => {
+    const progress = { status: 'success', digest: null, total: null, completed: null, error: null };
+    mockedInvoke.mockResolvedValue(progress);
+
+    await expect(ollamaPull('llama3.2')).resolves.toEqual(progress);
+    expect(mockedInvoke).toHaveBeenCalledWith('ollama_pull', { modelId: 'llama3.2' });
   });
 
   it('permissionOpenSettings invokes permission_open_settings with no args', async () => {
