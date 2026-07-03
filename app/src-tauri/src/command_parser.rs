@@ -168,10 +168,25 @@ pub fn parse(selection: &str) -> ParsedCommand {
             _ => {
                 if !reserved_tag(&word_lower) {
                     if preset.is_none() {
+                        // First preset trigger wins; its own content
+                        // folds into the message untagged (see
+                        // `untagged_text_around_a_preset_trigger_is_folded_into_the_message`).
                         preset = Some(hit.word.to_string());
-                    }
-                    if !content.is_empty() {
-                        message_parts.push(content);
+                        if !content.is_empty() {
+                            message_parts.push(content);
+                        }
+                    } else {
+                        // A later non-reserved slash-word isn't a second
+                        // preset trigger — only the first one is honored.
+                        // Keep the slash-word itself (and its content) as
+                        // literal message text, sliced verbatim from the
+                        // original selection, rather than silently
+                        // dropping it — a second `/word` the user typed
+                        // shouldn't vanish from the refined text.
+                        let literal = selection[hit.start..content_end].trim();
+                        if !literal.is_empty() {
+                            message_parts.push(literal);
+                        }
                     }
                 }
             }
@@ -315,6 +330,17 @@ mod tests {
 
         assert_eq!(parsed.preset, Some("greet".to_string()));
         assert_eq!(parsed.message, "hello\nworld");
+    }
+
+    #[test]
+    fn a_second_non_reserved_slash_word_does_not_become_a_second_preset_and_is_not_dropped() {
+        // Only the first preset trigger is honored; a later slash-word is
+        // literal message text, not silently swallowed.
+        let selection = "/foo hello /bar world";
+        let parsed = parse(selection);
+
+        assert_eq!(parsed.preset, Some("foo".to_string()));
+        assert_eq!(parsed.message, "hello\n/bar world");
     }
 
     #[test]

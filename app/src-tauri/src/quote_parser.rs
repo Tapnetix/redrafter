@@ -7,8 +7,17 @@
 // with `/q` (see `command_parser`) — `split` looks for the shapes a
 // pasted email/chat thread commonly takes: lines starting with `>`, an
 // `"On ... wrote:"` header introducing a quoted block, and a trailing
-// signature block (a `--` delimiter, or a short closing salutation like
-// `"Best,"` near the end of the message).
+// `--` email-signature delimiter.
+//
+// Deliberately conservative: a bare closing salutation like `"thanks"` or
+// `"Best,"` on its own line is *not* treated as a signature, even near the
+// end of the message. That heuristic used to exist here, but it produced
+// false positives — a short draft that legitimately ends in "thanks" or
+// "Best,\nJane" would have that sign-off silently stripped out of the
+// refined result. A false positive (losing part of the user's real draft)
+// is worse than a false negative (occasionally leaving a real signature
+// block in the draft), so only the unambiguous delimiters below are
+// recognized.
 //
 // (Plain `//` rather than a `//!` module doc: this file is also pulled into
 // `tests/parser_test.rs` via `include!` inside an inline `mod` block, and
@@ -86,40 +95,12 @@ fn is_wrote_header(line: &str) -> bool {
     lower.starts_with("on ") && lower.ends_with("wrote:")
 }
 
-/// Closing salutations that commonly introduce a signature block, when
-/// they appear on their own line near the end of the message.
-const SIGNATURE_SALUTATIONS: &[&str] = &[
-    "best",
-    "best regards",
-    "regards",
-    "sincerely",
-    "thanks",
-    "thank you",
-    "cheers",
-    "warmly",
-    "kind regards",
-    "warm regards",
-];
-
 /// Finds the line index where a trailing signature block starts, if any:
-/// either the canonical `--` email-signature delimiter, or a short
-/// closing salutation within the last few lines of the message.
+/// the canonical `--` email-signature delimiter. See the module-level doc
+/// comment for why a bare closing salutation is deliberately *not*
+/// recognized here.
 fn find_signature_start(lines: &[&str]) -> Option<usize> {
-    if let Some(idx) = lines.iter().position(|line| line.trim() == "--") {
-        return Some(idx);
-    }
-
-    let tail_start = lines.len().saturating_sub(3);
-    for (idx, line) in lines.iter().enumerate().skip(tail_start) {
-        let trimmed = line.trim().trim_end_matches([',', '.']);
-        if SIGNATURE_SALUTATIONS
-            .iter()
-            .any(|s| trimmed.eq_ignore_ascii_case(s))
-        {
-            return Some(idx);
-        }
-    }
-    None
+    lines.iter().position(|line| line.trim() == "--")
 }
 
 #[cfg(test)]
@@ -193,13 +174,27 @@ mod tests {
     }
 
     #[test]
-    fn a_short_closing_salutation_near_the_end_is_detected_as_a_signature() {
+    fn a_short_closing_salutation_near_the_end_is_not_treated_as_a_signature() {
+        // Regression: this used to be stripped out as a "signature block",
+        // which would silently drop a real sign-off from a short draft.
+        // Only the unambiguous `--` delimiter (and `>`-quoting / "wrote:"
+        // headers) count as context — see the module doc comment.
         let text = "Sounds good, see you then.\n\nBest,\nJane";
 
         let (quote, draft) = split(text);
 
-        assert_eq!(quote, Some("Best,\nJane".to_string()));
-        assert_eq!(draft, "Sounds good, see you then.");
+        assert_eq!(quote, None);
+        assert_eq!(draft, text);
+    }
+
+    #[test]
+    fn a_trailing_bare_thanks_is_not_treated_as_a_signature() {
+        let text = "hey can you send the deck\n\nthanks";
+
+        let (quote, draft) = split(text);
+
+        assert_eq!(quote, None);
+        assert_eq!(draft, text);
     }
 
     #[test]
