@@ -396,9 +396,22 @@ pipeline {
             when { branch 'main' }
             agent { label 'linux' }
             steps {
-                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                script {
+                  // Probe for the release credential first: if this controller
+                  // has no `github-release-token` (publishing not set up here),
+                  // skip the stage cleanly rather than failing the build UNSTABLE.
+                  // A normal branch build produces artifacts, not a GitHub Release;
+                  // only a configured-but-failing release should show as UNSTABLE.
+                  boolean hasToken = true
+                  try {
+                    withCredentials([string(credentialsId: 'github-release-token', variable: 'GH_TOKEN')]) { }
+                  } catch (ignored) { hasToken = false }
+                  if (!hasToken) {
+                    echo 'github-release-token not configured — skipping GitHub Release (publishing not set up on this controller).'
+                    return
+                  }
+                  catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
                     withCredentials([string(credentialsId: 'github-release-token', variable: 'GH_TOKEN')]) {
-                      script {
                         def repo = 'Tapnetix/redrafter'
                         // The version in tauri.conf.json is the release version; the
                         // matching tag is v<version>. We publish only when that tag
