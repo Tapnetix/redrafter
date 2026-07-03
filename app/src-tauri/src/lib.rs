@@ -360,9 +360,16 @@ mod tests {
     fn active_provider_returns_the_first_connection_with_an_enabled_model() {
         let connections = new_connections();
         // No enabled models yet -> skipped by `active_provider`.
-        connections.add("openai", "https://api.openai.com", &[]).unwrap();
         connections
-            .add("ollama", "http://localhost:11434", &["llama3".to_string()])
+            .add("openai", "https://api.openai.com", None, &[])
+            .unwrap();
+        connections
+            .add(
+                "ollama",
+                "http://localhost:11434",
+                None,
+                &["llama3".to_string()],
+            )
             .unwrap();
 
         let (_, model) = active_provider(&connections).expect("should find an enabled model");
