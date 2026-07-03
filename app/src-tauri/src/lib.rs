@@ -419,6 +419,11 @@ pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
 /// main thread and SIGSEGVs/errors under a test harness that runs tests off
 /// it; see `run_refine`, this function's thin `AppHandle`-unwrapping
 /// wrapper).
+// Only used by tests now that `run_refine` delegates to
+// `run_refine_emit_with_checker`; kept as the real-checker convenience wrapper
+// the paused-precedence test drives (paused short-circuits before the checker,
+// so the real `SystemAccessibilityChecker` is fine there on any platform).
+#[cfg(test)]
 async fn run_refine_with(
     settings: &SettingsStore,
     connections: &ConnectionStore,
@@ -525,13 +530,28 @@ fn emit_feedback_cues<R: tauri::Runtime>(
 pub(crate) async fn run_refine<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<RefineFlow, String> {
+    run_refine_emit_with_checker(app, &permission::SystemAccessibilityChecker).await
+}
+
+/// [`run_refine`]'s body, generic over the [`AccessibilityChecker`] so the
+/// full emit-cues → gate → pipeline → emit-cues sequence is testable against
+/// a real `AppHandle` (needed to observe the emitted feedback events) with a
+/// fake granted checker — `run_refine` always passes the real
+/// `SystemAccessibilityChecker`, which is denied in a headless test process on
+/// macOS (`AXIsProcessTrusted`) and would otherwise short-circuit at the gate
+/// before the asserted behavior.
+async fn run_refine_emit_with_checker<R: tauri::Runtime, C: AccessibilityChecker>(
+    app: &tauri::AppHandle<R>,
+    checker: &C,
+) -> Result<RefineFlow, String> {
     let settings = app.state::<SettingsStore>();
 
     if let Ok(cues) = feedback::on_refine_start(&settings) {
         emit_feedback_cues(app, REFINE_FEEDBACK_START_EVENT, cues);
     }
 
-    let result = run_refine_with(
+    let result = run_refine_with_checker(
+        checker,
         &settings,
         &app.state::<ConnectionStore>(),
         &app.state::<SecretStore>(),
@@ -1846,7 +1866,11 @@ mod tests {
                 .push(serde_json::from_str(event.payload()).unwrap());
         });
 
-        let result = run_refine(&handle).await;
+        // Use a fake *granted* checker so the pipeline reaches active_provider
+        // (NO_ACTIVE_MODEL_ERROR) deterministically on every platform — the
+        // real checker denies in a headless macOS test process, which would
+        // short-circuit at the permission gate before the cues we assert.
+        let result = run_refine_emit_with_checker(&handle, &FakeChecker(true)).await;
 
         assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
         // Default settings: spinner on, HUD off, sound on.
