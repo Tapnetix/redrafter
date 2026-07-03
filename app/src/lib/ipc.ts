@@ -175,6 +175,95 @@ export function secretsSet(location: KeyStorageLocation): Promise<void> {
   return invoke('secrets_set', { location });
 }
 
+// ── Model curation and active selection (B8) ──
+/**
+ * One curated (enabled) model, aggregated across every connection.
+ * Mirrors `models.rs`'s `CuratedModel`. The same `modelId` string can
+ * appear more than once (e.g. the same model enabled on two different
+ * Ollama endpoints) — `connectionId` disambiguates which row a given
+ * action (`modelSetActive`/`modelDisable`/`modelToggleFavorite`) applies to.
+ */
+export interface CuratedModel {
+  connectionId: string;
+  modelId: string;
+  providerKind: string;
+  /** Whether this is the single global active model `refine` uses. */
+  active: boolean;
+  /** Whether this model is starred (surfaces in the tray quick-switch, B9/B20). */
+  favorite: boolean;
+}
+
+/**
+ * The response every model-curation command resolves with, mirroring
+ * `models.rs`'s `ModelsListResult` — so the Models screen never needs a
+ * second round trip to see the effect of an action.
+ */
+export interface ModelsListResult {
+  models: CuratedModel[];
+  /** Whether some model in `models` is currently active. */
+  hasActive: boolean;
+  /**
+   * True when an active model was chosen but is no longer enabled (its
+   * connection was removed, or the model itself was disabled) — drives the
+   * Models screen's "active model unavailable" banner (S26).
+   */
+  activeUnavailable: boolean;
+  /** The stale active model's id, set alongside `activeUnavailable`. */
+  staleActiveModelId?: string | null;
+}
+
+/** Lists every enabled model across every connection, with active/favorite
+ * state. Backed by the `models_list` Tauri command. */
+export function modelsList(): Promise<ModelsListResult> {
+  return invoke<ModelsListResult>('models_list');
+}
+
+export interface ModelRefArgs extends Record<string, unknown> {
+  connectionId: string;
+  modelId: string;
+}
+
+/**
+ * Sets the single global active model — the one `refine` uses. Backed by
+ * `model_set_active`, which rejects (rather than silently accepting) a
+ * model that isn't currently enabled.
+ */
+export function modelSetActive(args: ModelRefArgs): Promise<ModelsListResult> {
+  return invoke<ModelsListResult>('model_set_active', args);
+}
+
+/** Disables a model (removes it from its connection's enabled set). Backed
+ * by `model_disable`. Disabling the active model leaves it stale rather
+ * than clearing it, surfacing as `activeUnavailable` on the next list. */
+export function modelDisable(args: ModelRefArgs): Promise<ModelsListResult> {
+  return invoke<ModelsListResult>('model_disable', args);
+}
+
+/** Toggles favorite status for a model. Backed by `model_toggle_favorite`. */
+export function modelToggleFavorite(args: ModelRefArgs): Promise<ModelsListResult> {
+  return invoke<ModelsListResult>('model_toggle_favorite', args);
+}
+
+/** Mirrors `llm-provider`'s `PullProgress` (via `models.rs`'s `ollama_pull`):
+ * the terminal line of an Ollama model pull's NDJSON progress stream. */
+export interface OllamaPullProgress {
+  status: string;
+  digest?: string | null;
+  total?: number | null;
+  completed?: number | null;
+  error?: string | null;
+}
+
+/**
+ * Pulls (downloads) `modelId` from the first configured Ollama connection,
+ * resolving once the download finishes (or rejecting on failure). Backed by
+ * the `ollama_pull` Tauri command; on success the model becomes available
+ * to enable/curate on the Models screen (not auto-enabled).
+ */
+export function ollamaPull(modelId: string): Promise<OllamaPullProgress> {
+  return invoke<OllamaPullProgress>('ollama_pull', { modelId });
+}
+
 // ── Permission open-settings (A9/A13) ──
 /**
  * Opens macOS System Settings so the user can re-grant Accessibility. Mirrors

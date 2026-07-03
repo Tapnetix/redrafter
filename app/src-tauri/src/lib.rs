@@ -15,6 +15,7 @@
 pub mod command_parser;
 pub mod connections;
 pub mod hotkey;
+pub mod models;
 pub mod orchestrator;
 pub mod permission;
 pub mod prompt_builder;

@@ -45,10 +45,52 @@ export function getTauriMockScript(data: TestData): string {
         // is set, so a retry (\`capture-retry\`) can simulate a fallback chain
         // eventually succeeding.
         refineFailed: false,
+        // The persisted active-model reference (B8): mirrors \`models.rs\`'s
+        // settings-backed \`active_model\` key. \`null\` means none chosen yet.
+        activeModel: TEST_DATA.activeModel || null,
+        // Favorited (connection, model) pairs (B8/B20), keyed by \`modelKey\`.
+        favorites: new Set(
+          (TEST_DATA.favoriteModels || []).map((f) => modelKey(f.connectionId, f.modelId)),
+        ),
       };
 
       function findConnection(id) {
         return state.connections.find((c) => c.id === id);
+      }
+
+      // Opaque per-(connection, model) key mirroring \`models.rs\`'s
+      // \`model_key\` — never parsed apart, just compared for equality.
+      function modelKey(connectionId, modelId) {
+        return JSON.stringify([connectionId, modelId]);
+      }
+
+      // Builds the curated cross-connection model list mirroring
+      // \`models.rs\`'s \`models_list_impl\`: every enabled model on every
+      // connection, with active/favorite state layered on top.
+      function buildModelsList() {
+        const models = [];
+        state.connections.forEach((c) => {
+          (c.enabledModels || []).forEach((modelId) => {
+            models.push({
+              connectionId: c.id,
+              modelId,
+              providerKind: c.providerKind,
+              active:
+                !!state.activeModel &&
+                state.activeModel.connectionId === c.id &&
+                state.activeModel.modelId === modelId,
+              favorite: state.favorites.has(modelKey(c.id, modelId)),
+            });
+          });
+        });
+        const hasActive = models.some((m) => m.active);
+        const activeUnavailable = !!state.activeModel && !hasActive;
+        return {
+          models,
+          hasActive,
+          activeUnavailable,
+          staleActiveModelId: activeUnavailable ? state.activeModel.modelId : null,
+        };
       }
 
       // A real Tauri IPC round-trip serializes to/from JSON, so the
@@ -201,6 +243,50 @@ export function getTauriMockScript(data: TestData): string {
           // ── Key storage (B10, backend TBD) ──
           case 'secrets_set':
             return null;
+
+          // ── Model curation and active selection (B8), used by Models ──
+          case 'models_list':
+            return buildModelsList();
+          case 'model_set_active': {
+            const connectionId = args && args.connectionId;
+            const modelId = args && args.modelId;
+            const connection = findConnection(connectionId);
+            if (!connection || connection.enabledModels.indexOf(modelId) === -1) {
+              throw \`model \${modelId} is not enabled on connection \${connectionId}\`;
+            }
+            state.activeModel = { connectionId, modelId };
+            return buildModelsList();
+          }
+          case 'model_disable': {
+            const connectionId = args && args.connectionId;
+            const modelId = args && args.modelId;
+            const connection = findConnection(connectionId);
+            if (!connection) throw \`no connection with id \${connectionId}\`;
+            connection.enabledModels = connection.enabledModels.filter((m) => m !== modelId);
+            return buildModelsList();
+          }
+          case 'model_toggle_favorite': {
+            const connectionId = args && args.connectionId;
+            const modelId = args && args.modelId;
+            const key = modelKey(connectionId, modelId);
+            if (state.favorites.has(key)) {
+              state.favorites.delete(key);
+            } else {
+              state.favorites.add(key);
+            }
+            return buildModelsList();
+          }
+          case 'ollama_pull': {
+            if (TEST_DATA.ollamaPullError) {
+              throw TEST_DATA.ollamaPullError;
+            }
+            const modelId = args && args.modelId;
+            const connection = state.connections.find((c) => c.providerKind === 'ollama');
+            if (connection && connection.availableModels.indexOf(modelId) === -1) {
+              connection.availableModels = connection.availableModels.concat([modelId]);
+            }
+            return { status: 'success', digest: null, total: null, completed: null, error: null };
+          }
 
           // ── Default refine pipeline (A9): capture -> prompt -> model ->
           // inject, all in one backend call. Errors drive the no-active-model
