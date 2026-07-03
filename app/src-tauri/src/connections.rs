@@ -102,6 +102,29 @@ impl ConnectionStore {
             )",
             [],
         )?;
+
+        // `CREATE TABLE IF NOT EXISTS` above is a no-op against a DB that
+        // already has a `connections` table -- notably A7's pre-B7b schema,
+        // which only had `id`/`provider_kind`/`base_url`/`enabled_models`.
+        // Without this, every B7b query against `api_key`/`available_models`
+        // fails with "no such column" on any DB created during Phase A.
+        // Migrate such tables in place by adding whichever of B7b's columns
+        // are missing; already-migrated (or freshly created) DBs already
+        // have both, so this is a no-op for them.
+        let existing_columns: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(connections)")?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            names.collect::<rusqlite::Result<_>>()?
+        };
+        if !existing_columns.iter().any(|c| c == "api_key") {
+            conn.execute("ALTER TABLE connections ADD COLUMN api_key TEXT", [])?;
+        }
+        if !existing_columns.iter().any(|c| c == "available_models") {
+            conn.execute(
+                "ALTER TABLE connections ADD COLUMN available_models TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -890,5 +913,98 @@ mod tests {
 
         assert!(err.contains("empty"), "got: {err}");
         assert_eq!(store.get(&added.id).unwrap().unwrap().enabled_models, Vec::<String>::new());
+    }
+
+    // ── schema migration (A7's 4-column DB -> B7b's 6-column DB) ──
+
+    /// Regression test for the upgrade path: A7 shipped `connections.sqlite3`
+    /// with only 4 columns (id, provider_kind, base_url, enabled_models).
+    /// `CREATE TABLE IF NOT EXISTS` is a no-op against that pre-existing
+    /// table, so opening a store on an A7-era DB must not simply skip
+    /// schema setup -- it must add the missing `api_key`/`available_models`
+    /// columns via migration.
+    /// Minimal RAII temp-file guard (no `tempfile` crate dependency): picks
+    /// a process- and test-unique path under the OS temp dir and removes it
+    /// (plus SQLite's `-wal`/`-shm` siblings) on drop.
+    struct TempDbPath(std::path::PathBuf);
+
+    impl TempDbPath {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "redrafter_connections_{label}_{}_{:?}.sqlite3",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDbPath {
+        fn drop(&mut self) {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", self.0.display()));
+            }
+        }
+    }
+
+    #[test]
+    fn open_migrates_an_a7_era_four_column_db_to_add_the_missing_columns() {
+        let temp = TempDbPath::new("migration");
+        let path = &temp.0;
+
+        // Simulate the pre-upgrade (A7) DB: create the old 4-column table
+        // directly and seed it with a row, exactly as A7's `init_schema`
+        // and `add` did (see commit 3316da3).
+        {
+            let raw = SqliteConnection::open(path).unwrap();
+            raw.execute(
+                "CREATE TABLE IF NOT EXISTS connections (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider_kind  TEXT NOT NULL,
+                    base_url       TEXT NOT NULL,
+                    enabled_models TEXT NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO connections (provider_kind, base_url, enabled_models)
+                 VALUES ('ollama', 'http://localhost:11434', '[\"llama3\"]')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Now open it through B7b's store, triggering migration.
+        let store = ConnectionStore::open(path).expect("open should migrate, not fail");
+
+        let listed = store.list().expect("list should succeed on a migrated DB");
+        assert_eq!(listed.len(), 1);
+        let seeded = &listed[0];
+        assert_eq!(seeded.provider_kind, "ollama");
+        assert_eq!(seeded.base_url, "http://localhost:11434");
+        assert_eq!(seeded.enabled_models, vec!["llama3".to_string()]);
+        assert_eq!(seeded.available_models, Vec::<String>::new());
+        assert_eq!(seeded.key_ref, None);
+
+        let fetched = store
+            .get(&seeded.id)
+            .expect("get should succeed on a migrated DB")
+            .expect("seeded row should exist");
+        assert_eq!(fetched, *seeded);
+        assert_eq!(store.api_key(&seeded.id).unwrap(), None);
+    }
+
+    #[test]
+    fn open_on_a_fresh_file_backed_db_still_works() {
+        let temp = TempDbPath::new("fresh");
+        let path = &temp.0;
+
+        let store = ConnectionStore::open(path).expect("open should succeed on a fresh DB");
+        let added = store
+            .add("openai", "https://api.openai.com", Some("sk-test"), &["gpt-4o".to_string()])
+            .unwrap();
+
+        assert_eq!(store.list().unwrap(), vec![added]);
     }
 }
