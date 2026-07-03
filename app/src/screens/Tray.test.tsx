@@ -285,6 +285,47 @@ describe('Tray', () => {
     });
   });
 
+  describe('check for updates (C7)', () => {
+    it('shows a checking state while the request is in flight, then resolves to the available result', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      let resolveCheck: (value: { updateAvailable: boolean; version?: string }) => void = () => {};
+      mockedIpc.checkUpdates.mockReturnValue(
+        new Promise((resolve) => {
+          resolveCheck = resolve;
+        }),
+      );
+
+      render(<Tray />);
+      fireEvent.click(await screen.findByTestId('tray-updates'));
+
+      // While the call is pending, the checking spinner state renders and
+      // neither terminal state is shown yet.
+      expect(await screen.findByTestId('tray-updates-checking')).toBeInTheDocument();
+      expect(screen.queryByTestId('tray-updates-uptodate')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('tray-updates-available')).not.toBeInTheDocument();
+
+      resolveCheck({ updateAvailable: true, version: 'v1.2' });
+
+      expect(await screen.findByTestId('tray-updates-available')).toHaveTextContent('v1.2');
+      expect(screen.queryByTestId('tray-updates-checking')).not.toBeInTheDocument();
+    });
+
+    it('reverts to the idle "Check for updates…" prompt if the check fails', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.checkUpdates.mockRejectedValue(new Error('network error'));
+
+      render(<Tray />);
+      const updates = await screen.findByTestId('tray-updates');
+      fireEvent.click(updates);
+
+      await waitFor(() => expect(mockedIpc.checkUpdates).toHaveBeenCalled());
+      await waitFor(() => expect(updates).toHaveTextContent('Check for updates'));
+      expect(screen.queryByTestId('tray-updates-checking')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('tray-updates-uptodate')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('tray-updates-available')).not.toBeInTheDocument();
+    });
+  });
+
   describe('launch at login (B17)', () => {
     it('reflects the persisted state and toggles via tray_set_launch_login', async () => {
       mockedIpc.modelsList.mockResolvedValue(result([]));
