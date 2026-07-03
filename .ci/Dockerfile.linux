@@ -1,0 +1,54 @@
+# redrafter Linux CI image.
+#
+# redrafter has no heavy native dependency beyond Tauri's own: no
+# OpenBLAS/ONNX/cmake toolchain. Its native deps are webkit2gtk-4.1/gtk/
+# rsvg/appindicator (+ patchelf for the AppImage bundle) and openssl/
+# pkg-config for reqwest's default-tls (native-tls -> system OpenSSL on
+# Linux). rusqlite's "bundled" feature compiles its own vendored sqlite3.c
+# via `cc`, so no cmake/bindgen/clang toolchain is needed either.
+#
+# The app source is NOT copied in — Jenkins mounts the workspace at runtime.
+# Only the toolchain + system build deps live here. Build context is .ci/.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CARGO_HOME=/opt/cargo \
+    RUSTUP_HOME=/opt/rustup \
+    APPIMAGE_EXTRACT_AND_RUN=1 \
+    PATH=/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin
+
+# System build deps:
+#   Tauri v2          -> libwebkit2gtk-4.1-dev, libgtk-3-dev, librsvg2-dev,
+#                        libayatana-appindicator3-dev, patchelf, file
+#   rusqlite bundled  -> build-essential (compiles vendored sqlite3.c)
+#   reqwest/openssl   -> libssl-dev, pkg-config
+#   deb/rpm/AppImage  -> rpm, xz-utils
+#   e2e-real          -> xvfb, webkit2gtk-driver (tauri-driver's WebDriver
+#                        backend) + xdotool/xclip/xsel (the same X11 tools
+#                        crates/text-inject/src/linux.rs's real backend
+#                        uses, so the harness can actually exercise it)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git build-essential pkg-config file patchelf \
+      rpm xz-utils \
+      libssl-dev \
+      libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+      xvfb webkit2gtk-driver xdotool xclip xsel \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 24 + pnpm (via corepack, matching the nvm v24 used on the host agents).
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && corepack enable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust stable + the cargo tools the pipeline needs, pre-installed so each build
+# doesn't reinstall them. /opt/cargo + /opt/rustup are made world-writable so a
+# non-root Jenkins UID can populate the registry cache (and a named volume
+# mounted over /opt/cargo inherits these perms on first use).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal \
+    && rustup component add clippy rustfmt llvm-tools-preview \
+    && cargo install cargo-nextest cargo-llvm-cov tauri-driver --locked \
+    && chmod -R a+rwX /opt/cargo /opt/rustup
+
+LABEL org.opencontainers.image.description="redrafter Linux CI — Ubuntu 24.04, Rust+Node24+Tauri deps"

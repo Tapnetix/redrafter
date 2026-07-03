@@ -1,0 +1,3 @@
+[profile.ci]
+# Output JUnit XML for Jenkins test reporting
+junit.path = "junit.xml"

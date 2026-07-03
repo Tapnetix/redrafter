@@ -19,6 +19,9 @@ coverage/
 playwright-report/
 test-results/
 
+# CI (Jenkins Linux build's cargo-llvm-cov JSON output, repo root)
+/coverage.json
+
 # Env / secrets
 .env
 .env.local
