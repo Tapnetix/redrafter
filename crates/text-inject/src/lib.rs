@@ -11,7 +11,10 @@
 //! The real macOS implementation lives in [`macos`] behind
 //! `#[cfg(target_os = "macos")]`, since it depends on `AXUIElement` and
 //! command-line tools (`pbcopy`/`pbpaste`/`osascript`) that only exist on
-//! macOS. On every other platform `capture()`/`inject()` return an
+//! macOS. The real Linux implementation lives in [`linux`] behind
+//! `#[cfg(target_os = "linux")]`, shelling out to `xclip`/`xsel`/`xdotool`
+//! on X11 or `wl-clipboard`/`ydotool`/`wtype` on Wayland (session detected
+//! at runtime). On every other platform `capture()`/`inject()` return an
 //! "unsupported platform" error, and this crate still compiles and its
 //! platform-agnostic orchestration logic (in [`capture`]/[`inject`]) is
 //! unit-tested via a fake [`PlatformOps`] in `tests/fallback_test.rs`.
@@ -21,6 +24,9 @@ mod inject;
 
 #[cfg(target_os = "macos")]
 mod macos;
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 pub use capture::{capture_with, CaptureSource, Captured};
 pub use inject::inject_with;
@@ -68,12 +74,23 @@ pub fn capture() -> Result<Captured> {
     capture::capture_with(&ops)
 }
 
-/// Capture is only implemented on macOS; other platforms report the
-/// selection as unavailable rather than silently returning nothing.
-#[cfg(not(target_os = "macos"))]
+/// Capture the current text selection on Linux: PRIMARY-selection read
+/// first (X11/Wayland's mouse-selection buffer, distinct from the
+/// `CLIPBOARD` selection), clipboard fallback (simulate Ctrl+C, read
+/// `CLIPBOARD`) otherwise.
+#[cfg(target_os = "linux")]
+pub fn capture() -> Result<Captured> {
+    let ops = linux::LinuxOps::new();
+    capture::capture_with(&ops)
+}
+
+/// Capture is only implemented on macOS and Linux; other platforms
+/// report the selection as unavailable rather than silently returning
+/// nothing.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn capture() -> Result<Captured> {
     Err(anyhow::anyhow!(
-        "Platform unsupported: text-inject capture is only available on macOS"
+        "Platform unsupported: text-inject capture is only available on macOS and Linux"
     ))
 }
 
@@ -85,16 +102,51 @@ pub fn inject(text: &str) -> Result<()> {
     inject::inject_with(&ops, text)
 }
 
-/// Inject is only implemented on macOS; other platforms report the
-/// injection target as unavailable rather than silently doing nothing.
-#[cfg(not(target_os = "macos"))]
+/// Inject `text` on Linux: there's no reliable direct selection write, so
+/// this always goes through the clipboard save/write/paste/restore
+/// fallback in `inject.rs`.
+#[cfg(target_os = "linux")]
+pub fn inject(text: &str) -> Result<()> {
+    let ops = linux::LinuxOps::new();
+    inject::inject_with(&ops, text)
+}
+
+/// Inject is only implemented on macOS and Linux; other platforms report
+/// the injection target as unavailable rather than silently doing
+/// nothing.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn inject(_text: &str) -> Result<()> {
     Err(anyhow::anyhow!(
-        "Platform unsupported: text-inject inject is only available on macOS"
+        "Platform unsupported: text-inject inject is only available on macOS and Linux"
     ))
 }
 
-#[cfg(all(test, not(target_os = "macos")))]
+/// Exercises the real `capture()`/`inject()` wiring on Linux — that it
+/// routes to `linux::LinuxOps` rather than the "unsupported platform"
+/// stub. This dev host has no live X11/Wayland session (and may lack
+/// `xdotool`/`ydotool`), so the real `xclip`/`xdotool` round-trip is
+/// deferred to D4's real-surface pass; here we only assert the wiring is
+/// live (any failure is a real backend error, never the stub message).
+#[cfg(all(test, target_os = "linux"))]
+mod linux_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn capture_routes_to_the_real_linux_backend_not_the_unsupported_stub() {
+        if let Err(err) = capture() {
+            assert!(!err.to_string().contains("Platform unsupported"));
+        }
+    }
+
+    #[test]
+    fn inject_routes_to_the_real_linux_backend_not_the_unsupported_stub() {
+        if let Err(err) = inject("some text") {
+            assert!(!err.to_string().contains("Platform unsupported"));
+        }
+    }
+}
+
+#[cfg(all(test, not(any(target_os = "macos", target_os = "linux"))))]
 mod non_macos_tests {
     use super::*;
 
