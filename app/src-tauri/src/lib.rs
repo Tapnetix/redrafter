@@ -12,11 +12,13 @@
 //! — so those thin command wrappers, and the `active_provider` lookup they
 //! share, live here instead.
 
+pub mod command_parser;
 pub mod connections;
 pub mod hotkey;
 pub mod orchestrator;
 pub mod permission;
 pub mod prompt_builder;
+pub mod quote_parser;
 pub mod settings;
 pub mod tray;
 

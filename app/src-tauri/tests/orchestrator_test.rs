@@ -13,6 +13,15 @@
 //! absolute path here resolves to plain `.../src/*.rs`, so coverage
 //! attributes correctly.
 
+mod command_parser {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/command_parser.rs"
+    ));
+}
+mod quote_parser {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/quote_parser.rs"));
+}
 mod prompt_builder {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
