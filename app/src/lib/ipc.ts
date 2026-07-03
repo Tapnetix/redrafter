@@ -362,3 +362,46 @@ export function trayRefine(): Promise<RefineOutcome> {
 export function trayQuit(): Promise<void> {
   return invoke('tray_quit');
 }
+
+// ── Tray status and pause (B17) ──
+/**
+ * Pauses global capturing: while paused, both the global hotkey and the
+ * tray's own "Refine selection" stop triggering `refine`/`tray_refine`. The
+ * real backend (B23) suspends the hotkey handler and persists the paused
+ * flag via the settings store; the frontend reflects it in the tray's status
+ * line. Backed by the `tray_pause` Tauri command.
+ */
+export function trayPause(): Promise<void> {
+  return invoke('tray_pause');
+}
+
+/** Resumes global capturing after `trayPause`. Backed by `tray_resume`. */
+export function trayResume(): Promise<void> {
+  return invoke('tray_resume');
+}
+
+/** Result of a `tray_check_updates` call: whether a newer version is
+ * available, and which one. */
+export interface CheckUpdatesResult {
+  updateAvailable: boolean;
+  version?: string | null;
+}
+
+/**
+ * Triggers an application-update check from the tray. Backed by the
+ * `tray_check_updates` Tauri command; B23/C2 wire it to the real
+ * `tauri-plugin-updater` check, this wrapper just calls the command and
+ * reports its result.
+ */
+export function checkUpdates(): Promise<CheckUpdatesResult> {
+  return invoke<CheckUpdatesResult>('tray_check_updates');
+}
+
+/**
+ * Toggles whether redrafter launches automatically at login. Backed by the
+ * `tray_set_launch_login` Tauri command, which persists the preference and
+ * (in B23's real wiring) drives `tauri-plugin-autostart`.
+ */
+export function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  return invoke('tray_set_launch_login', { enabled });
+}

@@ -9,6 +9,11 @@ vi.mock('@/lib/ipc', () => ({
   traySetActiveModel: vi.fn(),
   trayRefine: vi.fn(),
   trayQuit: vi.fn(),
+  settingsGet: vi.fn(),
+  trayPause: vi.fn(),
+  trayResume: vi.fn(),
+  checkUpdates: vi.fn(),
+  setLaunchAtLogin: vi.fn(),
 }));
 
 const mockedIpc = vi.mocked(ipc);
@@ -37,6 +42,10 @@ function result(models: CuratedModel[], overrides: Partial<ModelsListResult> = {
 describe('Tray', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default: not paused, launch-at-login on -- matches an unset settings
+    // store the same way settingsGet('anything-unset') resolves to null in
+    // the real backend.
+    mockedIpc.settingsGet.mockResolvedValue(null);
   });
 
   it('shows the active model label and no active model when none is set', async () => {
@@ -181,5 +190,118 @@ describe('Tray', () => {
 
     fireEvent.click(screen.getByTestId('tray-history'));
     expect(onNavigateToHistory).toHaveBeenCalled();
+  });
+
+  describe('pause / resume / status (B17)', () => {
+    it('shows Ready and the Pause control by default, and Resume is absent', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+
+      render(<Tray />);
+
+      expect(await screen.findByTestId('tray-state-idle')).toHaveTextContent('Ready');
+      expect(screen.getByTestId('tray-pause')).toBeInTheDocument();
+      expect(screen.queryByTestId('tray-resume')).not.toBeInTheDocument();
+    });
+
+    it('pausing calls tray_pause, shows Paused, swaps Pause for Resume, and disables Refine', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.trayPause.mockResolvedValue(undefined);
+
+      render(<Tray />);
+      await screen.findByTestId('tray-pause');
+
+      fireEvent.click(screen.getByTestId('tray-pause'));
+
+      await waitFor(() => expect(mockedIpc.trayPause).toHaveBeenCalled());
+      expect(await screen.findByTestId('tray-state-paused')).toHaveTextContent('Paused');
+      expect(screen.queryByTestId('tray-pause')).not.toBeInTheDocument();
+      expect(screen.getByTestId('tray-resume')).toBeInTheDocument();
+      expect(screen.getByTestId('tray-refine')).toBeDisabled();
+    });
+
+    it('while paused, clicking Refine selection does not call tray_refine', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.trayPause.mockResolvedValue(undefined);
+
+      render(<Tray />);
+      fireEvent.click(await screen.findByTestId('tray-pause'));
+      await screen.findByTestId('tray-state-paused');
+
+      fireEvent.click(screen.getByTestId('tray-refine'));
+
+      expect(mockedIpc.trayRefine).not.toHaveBeenCalled();
+    });
+
+    it('resuming calls tray_resume, restores Ready, and re-enables Refine', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.trayPause.mockResolvedValue(undefined);
+      mockedIpc.trayResume.mockResolvedValue(undefined);
+
+      render(<Tray />);
+      fireEvent.click(await screen.findByTestId('tray-pause'));
+      await screen.findByTestId('tray-resume');
+
+      fireEvent.click(screen.getByTestId('tray-resume'));
+
+      await waitFor(() => expect(mockedIpc.trayResume).toHaveBeenCalled());
+      expect(await screen.findByTestId('tray-state-idle')).toBeInTheDocument();
+      expect(screen.getByTestId('tray-pause')).toBeInTheDocument();
+      expect(screen.getByTestId('tray-refine')).not.toBeDisabled();
+    });
+
+    it('starts paused when settingsGet("paused") resolves "true"', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.settingsGet.mockImplementation((key: string) =>
+        Promise.resolve(key === 'paused' ? 'true' : null),
+      );
+
+      render(<Tray />);
+
+      expect(await screen.findByTestId('tray-state-paused')).toBeInTheDocument();
+      expect(screen.getByTestId('tray-resume')).toBeInTheDocument();
+    });
+  });
+
+  describe('check for updates (B17)', () => {
+    it('clicking Check for updates calls tray_check_updates and shows the result', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.checkUpdates.mockResolvedValue({ updateAvailable: true, version: 'v1.1' });
+
+      render(<Tray />);
+      fireEvent.click(await screen.findByTestId('tray-updates'));
+
+      await waitFor(() => expect(mockedIpc.checkUpdates).toHaveBeenCalled());
+      expect(await screen.findByTestId('tray-updates-available')).toHaveTextContent('v1.1');
+    });
+
+    it('shows up to date when no update is available', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.checkUpdates.mockResolvedValue({ updateAvailable: false });
+
+      render(<Tray />);
+      fireEvent.click(await screen.findByTestId('tray-updates'));
+
+      expect(await screen.findByTestId('tray-updates-uptodate')).toBeInTheDocument();
+    });
+  });
+
+  describe('launch at login (B17)', () => {
+    it('reflects the persisted state and toggles via tray_set_launch_login', async () => {
+      mockedIpc.modelsList.mockResolvedValue(result([]));
+      mockedIpc.settingsGet.mockImplementation((key: string) =>
+        Promise.resolve(key === 'launch_at_login' ? 'false' : null),
+      );
+      mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
+
+      render(<Tray />);
+
+      const toggle = await screen.findByTestId('tray-launch-login');
+      await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+
+      fireEvent.click(toggle);
+
+      await waitFor(() => expect(mockedIpc.setLaunchAtLogin).toHaveBeenCalledWith(true));
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+    });
   });
 });
