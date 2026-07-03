@@ -58,6 +58,12 @@ fn hotkey_test_app() -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
+// Exercises the REAL global-shortcut plugin backend (not the in-memory
+// fake). On Linux/CI the plugin registers headlessly; on macOS the OS-level
+// registration requires a running app on the main thread (like the tray
+// tests), so it's ignored there and covered instead by D4's macOS
+// real-surface pass (e2e-real). The Linux run still exercises the real backend.
+#[cfg_attr(target_os = "macos", ignore = "real macOS global-shortcut registration needs a running app/main thread; covered by D4 real-surface")]
 #[test]
 fn platform_hotkey_set_registers_the_default_combo_through_the_real_plugin_backend() {
     let app = hotkey_test_app();
