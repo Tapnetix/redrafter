@@ -125,6 +125,26 @@ export interface TestData {
   /** Canned response for the mocked `tray_check_updates` command (B17).
    * Defaults to `{ updateAvailable: false }` (already up to date). */
   updateCheckResult?: { updateAvailable: boolean; version?: string | null };
+  /**
+   * Seeds the mocked `history_list`'s stateful history store (C4): a list
+   * of past refines, most recent first. `history_restore`/`history_rerefine`
+   * look entries up by id; `history_rerefine` prepends a new entry (mutating
+   * this in place) rather than replacing the entry it re-ran.
+   */
+  historyEntries?: {
+    id: string;
+    original: string;
+    refined: string;
+    model: string;
+    createdAt: number;
+    command?: string | null;
+  }[];
+  /**
+   * When set, the mocked `history_rerefine` command's new entry uses this
+   * as its `refined` text instead of the default `"<original> (re-refined)"`
+   * placeholder (C4).
+   */
+  historyRerefineRefined?: string;
 }
 
 export const DEFAULT_TEST_DATA: TestData = {

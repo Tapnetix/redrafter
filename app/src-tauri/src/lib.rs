@@ -31,6 +31,7 @@
 
 pub mod command_parser;
 pub mod connections;
+pub mod history;
 pub mod hotkey;
 pub mod models;
 pub mod orchestrator;
