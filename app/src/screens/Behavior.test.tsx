@@ -39,7 +39,7 @@ describe('Behavior', () => {
     render(<Behavior />);
 
     const textarea = await screen.findByTestId('default-direction');
-    await waitFor(() => expect(mockedIpc.settingsGet).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedIpc.settingsGet).toHaveBeenCalledWith('refine.default_direction'));
 
     fireEvent.change(textarea, { target: { value: 'Tighten it up, no jokes.' } });
     fireEvent.blur(textarea);
