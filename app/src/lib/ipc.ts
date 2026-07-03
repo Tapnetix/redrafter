@@ -457,4 +457,97 @@ export interface HistoryReRefineArgs extends Record<string, unknown> {
  */
 export function historyReRefine(args: HistoryReRefineArgs): Promise<HistoryEntry> {
   return invoke<HistoryEntry>('history_rerefine', args);
+// ── Presets (C3/C3b) ──
+/** A single before/after few-shot example, mirroring `presets.rs`'s
+ * `PresetExample`. */
+export interface PresetExample {
+  before: string;
+  after: string;
+}
+
+/**
+ * A stored preset — the direction (and optional overrides) a `/trigger`
+ * resolves to. Mirrors `presets.rs`'s `Preset` (`#[serde(rename_all =
+ * "camelCase")]`). `builtin`/`overridden` are computed by the backend on
+ * every read (never persisted): `builtin` is whether `trigger` names one of
+ * the shipped defaults, and `overridden` is whether a user-saved row shadows
+ * it — the Presets screen's badge/override-warning data (C3/C8).
+ */
+export interface Preset {
+  trigger: string;
+  direction: string;
+  model?: string | null;
+  lang?: string | null;
+  inject?: string | null;
+  examples: PresetExample[];
+  builtin: boolean;
+  overridden: boolean;
+}
+
+/** The result of `presetImport`, mirroring `presets.rs`'s
+ * `PresetImportResult`: every trigger actually imported, and the subset of
+ * those that already resolved to something (so were overwritten/overridden
+ * rather than newly added). */
+export interface PresetImportResult {
+  imported: string[];
+  conflicts: string[];
+}
+
+/** Lists every available preset (built-in + user, with override status).
+ * Backed by the `preset_list` Tauri command. */
+export function presetList(): Promise<Preset[]> {
+  return invoke<Preset[]>('preset_list');
+}
+
+export interface PresetSaveArgs extends Record<string, unknown> {
+  trigger: string;
+  direction: string;
+  model?: string;
+  lang?: string;
+  inject?: string;
+  examples: PresetExample[];
+}
+
+/**
+ * Creates or updates a user preset. Saving under a built-in's trigger
+ * creates/updates the override that shadows it (surfaced by `overridden` on
+ * the next `presetList`). Backed by the `preset_save` Tauri command.
+ */
+export function presetSave(args: PresetSaveArgs): Promise<Preset> {
+  return invoke<Preset>('preset_save', args);
+}
+
+/** Deletes a user preset (or override) — errors for an unmodified built-in
+ * (see `presetResetDefault`, the "go back to the shipped default"
+ * operation). Backed by the `preset_delete` Tauri command. */
+export function presetDelete(trigger: string): Promise<void> {
+  return invoke('preset_delete', { trigger });
+}
+
+/** Copies the resolved preset at `trigger` (built-in, override, or user)
+ * into a new user preset under `newTrigger`, leaving the original untouched
+ * — the "Duplicate instead" alternative to overriding a built-in in place.
+ * Backed by the `preset_duplicate` Tauri command. */
+export function presetDuplicate(trigger: string, newTrigger: string): Promise<Preset> {
+  return invoke<Preset>('preset_duplicate', { trigger, newTrigger });
+}
+
+/** Restores a built-in preset the user overrode back to its shipped
+ * default, discarding the override. Backed by the `preset_reset_default`
+ * Tauri command. */
+export function presetResetDefault(trigger: string): Promise<void> {
+  return invoke('preset_reset_default', { trigger });
+}
+
+/** Exports every user-saved preset (overrides and plain user presets) as a
+ * portable JSON string. Backed by the `preset_export` Tauri command. */
+export function presetExport(): Promise<string> {
+  return invoke<string>('preset_export');
+}
+
+/** Imports a JSON array of presets (the shape `presetExport` produces),
+ * merging them into the user store and flagging trigger conflicts. Backed
+ * by the `preset_import` Tauri command. */
+export function presetImport(json: string): Promise<PresetImportResult> {
+  return invoke<PresetImportResult>('preset_import', { json });
 }

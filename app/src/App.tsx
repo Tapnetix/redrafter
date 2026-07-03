@@ -10,9 +10,8 @@
 //      the settings shell (NavRail + Sidebar chrome around the selected
 //      screen).
 //
-// The Presets section has no screen yet (Phase C); its rail/sidebar nav item
-// navigates to a "coming soon" placeholder so it's never dead. History (C4)
-// joins Models (B8) and Connections (B7) as the screens wired in here
+// History (C4) and Presets (C3) join Models (B8), Connections (B7), General,
+// Behavior, and Tray as the screens wired into the section switcher here.
 // alongside Phase A's General/Behavior. The Capture panel and the menu-bar
 // Tray are each normally their own window (wired natively in lib.rs /
 // created from tauri.conf.json's trayIcon); their standalone `/capture` and
@@ -33,6 +32,7 @@ import Behavior from '@/screens/Behavior';
 import Connections from '@/screens/Connections';
 import Models from '@/screens/Models';
 import History from '@/screens/History';
+import Presets from '@/screens/Presets';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
 import { useModelStore } from '@/lib/model-store';
 import { applyTheme, loadTheme } from '@/lib/theme';
@@ -100,6 +100,8 @@ function SectionView({ section, onNavigate }: { section: Section; onNavigate: (s
       return <Models onNavigateToConnections={() => onNavigate('connections')} />;
     case 'history':
       return <History />;
+    case 'presets':
+      return <Presets />;
     default:
       return <ComingSoon section={section} />;
   }
