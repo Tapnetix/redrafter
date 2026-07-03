@@ -24,6 +24,20 @@ tokio-util = "0.7"
 rusqlite = { version = "0.31", features = ["bundled"] }
 llm-provider = { path = "../../crates/llm-provider" }
 text-inject = { path = "../../crates/text-inject" }
+# B10 (secrets.rs): AES-256-GCM for the default encrypted-file key store,
+# plus the base64 encoding its on-disk (nonce || ciphertext+tag) blobs use.
+# Both were already resolved transitively (via reqwest/tauri's TLS stack),
+# so pulling them in directly keeps the `Cargo.lock` diff to "promote to a
+# direct dependency" rather than a new subtree.
+ring = "0.17"
+base64 = "0.22"
+
+# B10 (secrets.rs): the opt-in OS-keychain backend. macOS-only -- every
+# other target compiles a stub (see `secrets::KeychainBackend`) so the crate
+# still builds (and its tests still run) off macOS; the real keychain path
+# is verified on macOS hardware separately.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [dev-dependencies]
 async-trait = "0.1"

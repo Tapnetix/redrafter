@@ -19,6 +19,7 @@ pub mod orchestrator;
 pub mod permission;
 pub mod prompt_builder;
 pub mod quote_parser;
+pub mod secrets;
 pub mod settings;
 pub mod tray;
 
