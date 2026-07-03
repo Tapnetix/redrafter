@@ -9,12 +9,21 @@
 // backend prompt_builder falls back to (see
 // app/src-tauri/src/prompt_builder.rs's DEFAULT_DIRECTION).
 //
-// This task (B6b) extends the screen with inject-mode, quote-behavior, and
-// the on-failure fallback chain — the settings B5's orchestrator
+// B6b extended the screen with inject-mode, quote-behavior, and the
+// on-failure fallback chain — the settings B5's orchestrator
 // (`InjectMode`/`FallbackTarget` in app/src-tauri/src/orchestrator.rs) and
-// B23 (which wires settings into the orchestrator call) will read. History
-// retention and progress-feedback controls are a later phase (C5) that
-// further extends this file; do not add them here.
+// B23 (which wires settings into the orchestrator call) will read.
+//
+// This task (C5) adds the history-retention controls and the
+// progress-feedback toggles. The feedback toggles persist to the exact
+// settings keys (`feedback.spinner`/`feedback.hud`/`feedback.sound`) that
+// `app/src-tauri/src/feedback.rs`'s `on_refine_start`/`on_refine_done` (C1)
+// read via `SettingsStore`'s typed `feedback_*_enabled` accessors to decide
+// which in-flight/completion cues fire on the next refine — wiring those
+// hooks into the real refine call is C17's job. The retention controls
+// (`history.retention_count`/`history.retention_days`) are plain
+// settings values with no backend reader yet (a later task's job), same as
+// B6b's fallback chain/retry count above.
 import { useEffect, useState } from 'react';
 import { settingsGet, settingsSet } from '@/lib/ipc';
 
@@ -24,6 +33,11 @@ const QUOTE_MODE_SETTINGS_KEY = 'behavior.quote_mode';
 const ON_FAILURE_SETTINGS_KEY = 'behavior.on_failure';
 const FALLBACK_CHAIN_SETTINGS_KEY = 'behavior.fallback_chain';
 const RETRY_COUNT_SETTINGS_KEY = 'behavior.retry_count';
+const RETENTION_COUNT_SETTINGS_KEY = 'history.retention_count';
+const RETENTION_DAYS_SETTINGS_KEY = 'history.retention_days';
+const FEEDBACK_SPINNER_SETTINGS_KEY = 'feedback.spinner';
+const FEEDBACK_HUD_SETTINGS_KEY = 'feedback.hud';
+const FEEDBACK_SOUND_SETTINGS_KEY = 'feedback.sound';
 
 type InjectMode = 'blind' | 'review';
 type QuoteMode = 'answer' | 'answer_quote' | 'rd';
@@ -34,6 +48,26 @@ const DEFAULT_QUOTE_MODE: QuoteMode = 'answer_quote';
 const DEFAULT_ON_FAILURE: OnFailureMode = 'notify';
 const DEFAULT_FALLBACK_CHAIN = ['gpt-5.1', 'qwen3:8b'];
 const DEFAULT_RETRY_COUNT = '2';
+const DEFAULT_RETENTION_COUNT = '50';
+const DEFAULT_RETENTION_DAYS = '7';
+/** Matches the wireframe's default (checked) selection for each cue. */
+const DEFAULT_FEEDBACK_SPINNER = true;
+const DEFAULT_FEEDBACK_HUD = false;
+const DEFAULT_FEEDBACK_SOUND = true;
+
+/** How many history entries to keep, matching the wireframe's dropdown. */
+const RETENTION_COUNT_OPTIONS = ['25', '50', '200', 'Unlimited'];
+/** Days before auto-purge; 0 means session-only (cleared on quit). */
+const RETENTION_DAYS_OPTIONS = ['0', '7', '30', '90'];
+
+/** Parses a `settings_get` boolean result (`"true"`/`"false"`), tolerating
+ * missing/malformed values by falling back to `fallback` — mirrors
+ * `SettingsStore::get_bool`'s (settings.rs) tolerant read. */
+function parseBool(value: string | null, fallback: boolean): boolean {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
+}
 
 /** Grouped by provider, matching the wireframe's fallback-model dropdown. */
 const FALLBACK_MODEL_GROUPS: Array<{ label: string; models: string[] }> = [
@@ -76,6 +110,11 @@ export default function Behavior() {
   const [onFailure, setOnFailure] = useState<OnFailureMode>(DEFAULT_ON_FAILURE);
   const [fallbackChain, setFallbackChain] = useState<string[]>(DEFAULT_FALLBACK_CHAIN);
   const [retryCount, setRetryCount] = useState<string>(DEFAULT_RETRY_COUNT);
+  const [retentionCount, setRetentionCount] = useState<string>(DEFAULT_RETENTION_COUNT);
+  const [retentionDays, setRetentionDays] = useState<string>(DEFAULT_RETENTION_DAYS);
+  const [feedbackSpinner, setFeedbackSpinner] = useState<boolean>(DEFAULT_FEEDBACK_SPINNER);
+  const [feedbackHud, setFeedbackHud] = useState<boolean>(DEFAULT_FEEDBACK_HUD);
+  const [feedbackSound, setFeedbackSound] = useState<boolean>(DEFAULT_FEEDBACK_SOUND);
 
   useEffect(() => {
     settingsGet(DEFAULT_DIRECTION_SETTINGS_KEY)
@@ -103,6 +142,26 @@ export default function Behavior() {
     settingsGet(RETRY_COUNT_SETTINGS_KEY)
       .then((value) => setRetryCount(value ?? DEFAULT_RETRY_COUNT))
       .catch(() => setRetryCount(DEFAULT_RETRY_COUNT));
+
+    settingsGet(RETENTION_COUNT_SETTINGS_KEY)
+      .then((value) => setRetentionCount(value ?? DEFAULT_RETENTION_COUNT))
+      .catch(() => setRetentionCount(DEFAULT_RETENTION_COUNT));
+
+    settingsGet(RETENTION_DAYS_SETTINGS_KEY)
+      .then((value) => setRetentionDays(value ?? DEFAULT_RETENTION_DAYS))
+      .catch(() => setRetentionDays(DEFAULT_RETENTION_DAYS));
+
+    settingsGet(FEEDBACK_SPINNER_SETTINGS_KEY)
+      .then((value) => setFeedbackSpinner(parseBool(value, DEFAULT_FEEDBACK_SPINNER)))
+      .catch(() => setFeedbackSpinner(DEFAULT_FEEDBACK_SPINNER));
+
+    settingsGet(FEEDBACK_HUD_SETTINGS_KEY)
+      .then((value) => setFeedbackHud(parseBool(value, DEFAULT_FEEDBACK_HUD)))
+      .catch(() => setFeedbackHud(DEFAULT_FEEDBACK_HUD));
+
+    settingsGet(FEEDBACK_SOUND_SETTINGS_KEY)
+      .then((value) => setFeedbackSound(parseBool(value, DEFAULT_FEEDBACK_SOUND)))
+      .catch(() => setFeedbackSound(DEFAULT_FEEDBACK_SOUND));
   }, []);
 
   const saveDirection = () => {
@@ -144,6 +203,34 @@ export default function Behavior() {
   const changeRetryCount = (value: string) => {
     setRetryCount(value);
     settingsSet(RETRY_COUNT_SETTINGS_KEY, value).catch(() => {});
+  };
+
+  const changeRetentionCount = (value: string) => {
+    setRetentionCount(value);
+    settingsSet(RETENTION_COUNT_SETTINGS_KEY, value).catch(() => {});
+  };
+
+  const changeRetentionDays = (value: string) => {
+    setRetentionDays(value);
+    settingsSet(RETENTION_DAYS_SETTINGS_KEY, value).catch(() => {});
+  };
+
+  const toggleFeedbackSpinner = () => {
+    const next = !feedbackSpinner;
+    setFeedbackSpinner(next);
+    settingsSet(FEEDBACK_SPINNER_SETTINGS_KEY, next ? 'true' : 'false').catch(() => {});
+  };
+
+  const toggleFeedbackHud = () => {
+    const next = !feedbackHud;
+    setFeedbackHud(next);
+    settingsSet(FEEDBACK_HUD_SETTINGS_KEY, next ? 'true' : 'false').catch(() => {});
+  };
+
+  const toggleFeedbackSound = () => {
+    const next = !feedbackSound;
+    setFeedbackSound(next);
+    settingsSet(FEEDBACK_SOUND_SETTINGS_KEY, next ? 'true' : 'false').catch(() => {});
   };
 
   return (
@@ -360,6 +447,98 @@ export default function Behavior() {
                 <option value="2">2</option>
                 <option value="3">3</option>
               </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      {/* HISTORY RETENTION */}
+      <section className="sec" data-testid="behavior-history-retention">
+        <h2 className="sec__title">History retention</h2>
+        <div className="grp" style={{ padding: 14 }} data-testid="history-retention">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 'var(--fs-small)' }}>
+            <span>Keep</span>
+            <label className="vh" htmlFor="ret-count">
+              Entries to keep
+            </label>
+            <select
+              className="input"
+              id="ret-count"
+              data-testid="retention-count"
+              style={{ minWidth: 90 }}
+              value={retentionCount}
+              onChange={(event) => changeRetentionCount(event.target.value)}
+            >
+              {RETENTION_COUNT_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <span>entries · auto-purge after</span>
+            <label className="vh" htmlFor="ret-days">
+              Days before purge
+            </label>
+            <select
+              className="input"
+              id="ret-days"
+              data-testid="retention-days"
+              style={{ minWidth: 70 }}
+              value={retentionDays}
+              onChange={(event) => changeRetentionDays(event.target.value)}
+            >
+              {RETENTION_DAYS_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <span>days</span>
+          </div>
+          <p className="muted tiny" style={{ margin: '10px 0 0' }}>
+            <span className="mono">0</span> days = session only (history cleared on quit).
+          </p>
+        </div>
+      </section>
+
+      {/* PROGRESS FEEDBACK */}
+      <section className="sec" data-testid="behavior-feedback">
+        <h2 className="sec__title">Progress feedback</h2>
+        <div className="grp" style={{ padding: 14 }} data-testid="feedback-opts">
+          <div className="opt-row">
+            <input
+              type="checkbox"
+              id="fb-spinner"
+              data-testid="feedback-spinner"
+              checked={feedbackSpinner}
+              onChange={toggleFeedbackSpinner}
+            />
+            <label htmlFor="fb-spinner">
+              <strong>Menu-bar spinner</strong> — baseline indicator while refining.
+            </label>
+          </div>
+          <div className="opt-row">
+            <input
+              type="checkbox"
+              id="fb-hud"
+              data-testid="feedback-hud"
+              checked={feedbackHud}
+              onChange={toggleFeedbackHud}
+            />
+            <label htmlFor="fb-hud">
+              <strong>Cursor HUD</strong> — floating pill near your cursor.
+            </label>
+          </div>
+          <div className="opt-row">
+            <input
+              type="checkbox"
+              id="fb-sound"
+              data-testid="feedback-sound"
+              checked={feedbackSound}
+              onChange={toggleFeedbackSound}
+            />
+            <label htmlFor="fb-sound">
+              <strong>Completion sound</strong> — chime when the redraft lands.
             </label>
           </div>
         </div>
