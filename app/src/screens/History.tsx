@@ -45,14 +45,22 @@ export default function History() {
   }, []);
 
   async function restore(entry: HistoryEntry) {
-    await historyRestore(entry.id);
-    setMessage('Original restored');
+    try {
+      await historyRestore(entry.id);
+      setMessage('Original restored');
+    } catch {
+      setMessage('Restore failed');
+    }
   }
 
   async function reRefine(entry: HistoryEntry) {
-    const updated = await historyReRefine({ id: entry.id });
-    setEntries((prev) => [updated, ...prev]);
-    setMessage('Re-refined');
+    try {
+      const updated = await historyReRefine({ id: entry.id });
+      setEntries((prev) => [updated, ...prev]);
+      setMessage('Re-refined');
+    } catch {
+      setMessage('Re-refine failed');
+    }
   }
 
   return (
