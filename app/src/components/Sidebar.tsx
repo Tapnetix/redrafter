@@ -6,43 +6,57 @@
 // same section switcher in App.tsx) rather than URL routing, so each nav item
 // calls `onNavigate(sectionId)` instead of being an <a href>.
 //
-// `sidebar-active-model` reads the same "first connection with an enabled
-// model" Phase A treats as the whole app's active model (mirrors the
-// backend's `active_provider` in `lib.rs`) — there's no Models screen yet to
-// pick a different one, so this is a summary, not a switcher; clicking it
-// still routes to the Models section (rendered as "coming soon" by App.tsx
-// until Phase B/C builds it), matching `controls/index.json`'s declared
-// behavior for that testid.
+// `sidebar-active-model` shows the whole app's active model. B23 wires it to
+// the shared `model-store` (B8's `models_list` active model, refreshed when a
+// pick is made anywhere): App.tsx passes that label in via `activeModelLabel`.
+// When no label is supplied (e.g. Sidebar rendered in isolation), it falls
+// back to its own read of the first connection with an enabled model (the
+// Phase A `active_provider` heuristic), so the component still works
+// standalone. Clicking it routes to the Models section (S26's switcher),
+// matching `controls/index.json`'s declared behavior for that testid.
 
 import { useEffect, useState } from 'react';
 import { RAIL_ITEMS, RailIcon, type Section } from '@/components/NavRail';
 import { connectionList } from '@/lib/ipc';
+import { NO_MODEL_LABEL } from '@/lib/model-store';
 
 export interface SidebarProps {
   /** The section currently shown, so its nav item renders as active. */
   active: Section;
   /** Called with the target section id when a nav item is activated. */
   onNavigate: (section: Section) => void;
+  /**
+   * The active-model label from the shared `model-store` (App.tsx supplies
+   * it). When omitted, the Sidebar derives its own from `connection_list`
+   * so it still renders a sensible summary in isolation.
+   */
+  activeModelLabel?: string;
 }
 
-export default function Sidebar({ active, onNavigate }: SidebarProps) {
-  const [activeModel, setActiveModel] = useState<string | null>(null);
+export default function Sidebar({ active, onNavigate, activeModelLabel }: SidebarProps) {
+  const [fallbackModel, setFallbackModel] = useState<string | null>(null);
 
   useEffect(() => {
+    // Only needed for the standalone fallback path — when App.tsx supplies
+    // `activeModelLabel` from the shared store, skip the extra fetch.
+    if (activeModelLabel !== undefined) return;
     let cancelled = false;
     connectionList()
       .then((connections) => {
         if (cancelled) return;
         const withModel = connections.find((c) => c.enabledModels.length > 0);
-        setActiveModel(withModel ? withModel.enabledModels[0] : null);
+        setFallbackModel(withModel ? withModel.enabledModels[0] : null);
       })
       .catch(() => {
-        if (!cancelled) setActiveModel(null);
+        if (!cancelled) setFallbackModel(null);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeModelLabel]);
+
+  const label = activeModelLabel ?? fallbackModel ?? NO_MODEL_LABEL;
+  const hasModel = label !== NO_MODEL_LABEL;
 
   return (
     <aside className="sidebar" aria-label="Settings sections" data-testid="sidebar">
@@ -76,8 +90,8 @@ export default function Sidebar({ active, onNavigate }: SidebarProps) {
           style={{ border: '1px solid var(--border)' }}
           onClick={() => onNavigate('models')}
         >
-          <span className={`status-dot ${activeModel ? 'green' : 'amber'}`} aria-hidden="true" />
-          <span className="nav-item__label mono">{activeModel ?? 'No model selected'}</span>
+          <span className={`status-dot ${hasModel ? 'green' : 'amber'}`} aria-hidden="true" />
+          <span className="nav-item__label mono">{label}</span>
         </button>
       </div>
     </aside>

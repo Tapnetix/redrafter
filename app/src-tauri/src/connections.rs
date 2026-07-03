@@ -32,6 +32,8 @@ use llm_provider::{
     OpenAiCompatProvider,
 };
 
+use crate::secrets::{secrets_get, SecretStore};
+
 /// A stored provider connection.
 ///
 /// `rename_all = "camelCase"` only affects the JSON wire format (the shape
@@ -371,24 +373,89 @@ pub fn provider_for(provider_kind: &str, base_url: &str, api_key: &str) -> Box<d
     }
 }
 
+/// Resolves the API key to use when building a provider for an already-
+/// stored connection (B23 reconciliation): prefers the secure
+/// [`SecretStore`] (mirrored there by `connection_add`/`connection_edit`,
+/// see [`mirror_api_key`]), falling back to `ConnectionStore`'s own
+/// plaintext `api_key` column when secure storage has nothing for this id
+/// (e.g. a connection added before this reconciliation, or secure storage
+/// itself failing open). Empty (no key either place, e.g. a keyless Ollama
+/// endpoint) resolves to `""`, same as `provider_for`'s keyless callers
+/// already expect.
+pub fn resolve_api_key(
+    connections: &ConnectionStore,
+    secrets: &SecretStore,
+    connection_id: &str,
+) -> Result<String> {
+    if let Some(key) = secrets_get(secrets, connection_id)? {
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+    Ok(connections.api_key(connection_id)?.unwrap_or_default())
+}
+
+/// Best-effort: mirrors `key` into secure storage for `connection_id`
+/// (`Some(non-empty)` -> set, `None`/empty -> clear), so [`resolve_api_key`]
+/// can read a real cloud-provider key back later. Logs rather than fails
+/// the caller on error -- the plaintext `ConnectionStore::api_key` column is
+/// still the connection's durable record either way (`resolve_api_key`'s
+/// fallback), so a mirroring hiccup here shouldn't turn a successful
+/// add/edit into a failure.
+fn mirror_api_key(secrets: &SecretStore, connection_id: &str, key: Option<&str>) {
+    let result = match key.filter(|k| !k.is_empty()) {
+        Some(key) => secrets.set(connection_id, key),
+        None => secrets.delete(connection_id),
+    };
+    if let Err(e) = result {
+        eprintln!("[connections] failed to sync secure-storage key for {connection_id}: {e}");
+    }
+}
+
+/// Connects and persists a connection (see [`connect_and_store`]), then
+/// mirrors a non-empty `api_key` into secure storage (B23 -- see
+/// [`mirror_api_key`]) so `resolve_api_key` can hand it back to a real
+/// cloud-provider call later. Takes `&dyn LlmProvider` directly (like
+/// `connect_and_store`) so the whole "connect, persist, mirror" sequence is
+/// unit-testable with a fake, independent of a live HTTP endpoint; the
+/// `connection_add` command below is the thin production wrapper that
+/// builds the real provider via [`provider_for`].
+pub async fn connect_store_and_mirror_key(
+    store: &ConnectionStore,
+    secrets: &SecretStore,
+    provider: &dyn LlmProvider,
+    provider_kind: &str,
+    base_url: &str,
+    api_key: &str,
+) -> Result<Connection> {
+    let connection =
+        connect_and_store(store, provider, provider_kind, base_url, Some(api_key)).await?;
+    mirror_api_key(secrets, &connection.id, Some(api_key));
+    Ok(connection)
+}
+
 /// Tauri command: connects a provider (verifying reachability through the
 /// vendor-appropriate `llm-provider` implementation, see [`provider_for`])
-/// and persists it with a default enabled model. Registered by A14
-/// (`app/src-tauri/src/lib.rs`), which manages a `ConnectionStore` as state.
+/// and persists it with a default enabled model, mirroring a non-empty key
+/// into secure storage (see [`connect_store_and_mirror_key`]). Registered by
+/// A14/B23 (`app/src-tauri/src/lib.rs`), which manages a `ConnectionStore`/
+/// `SecretStore` as state.
 #[tauri::command]
 pub async fn connection_add(
     state: tauri::State<'_, ConnectionStore>,
+    secrets: tauri::State<'_, SecretStore>,
     provider_kind: String,
     base_url: String,
     api_key: String,
 ) -> Result<Connection, String> {
     let provider = provider_for(&provider_kind, &base_url, &api_key);
-    connect_and_store(
+    connect_store_and_mirror_key(
         &state,
+        &secrets,
         provider.as_ref(),
         &provider_kind,
         &base_url,
-        Some(api_key.as_str()),
+        &api_key,
     )
     .await
     .map_err(|e| e.to_string())
@@ -415,23 +482,31 @@ pub fn connection_edit_impl(
 }
 
 /// Tauri command wrapping [`connection_edit_impl`]. `api_key: None` means
-/// "leave the key unchanged"; `Some(String::new())` clears it.
+/// "leave the key unchanged"; `Some(String::new())` clears it. Whenever the
+/// key does change, mirrors the new value (or its absence) into secure
+/// storage too (B23 -- see [`mirror_api_key`]), keeping it in sync with the
+/// plaintext DB column `connection_edit_impl` writes.
 #[tauri::command]
 pub fn connection_edit(
     state: tauri::State<'_, ConnectionStore>,
+    secrets: tauri::State<'_, SecretStore>,
     id: String,
     base_url: Option<String>,
     api_key: Option<String>,
     enabled_models: Option<Vec<String>>,
 ) -> Result<Connection, String> {
-    connection_edit_impl(
+    let connection = connection_edit_impl(
         &state,
         &id,
         base_url.as_deref(),
         api_key.as_deref().map(Some),
         enabled_models.as_deref(),
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    if let Some(ref key) = api_key {
+        mirror_api_key(&secrets, &id, Some(key.as_str()));
+    }
+    Ok(connection)
 }
 
 /// Deletes a connection, detaching whatever enabled/available models it
@@ -441,13 +516,18 @@ pub fn connection_remove_impl(store: &ConnectionStore, id: &str) -> Result<()> {
     store.remove(id)
 }
 
-/// Tauri command wrapping [`connection_remove_impl`].
+/// Tauri command wrapping [`connection_remove_impl`]. Also clears the
+/// connection's secure-storage key, if any (B23), so a removed connection
+/// doesn't leave an orphaned secret behind.
 #[tauri::command]
 pub fn connection_remove(
     state: tauri::State<'_, ConnectionStore>,
+    secrets: tauri::State<'_, SecretStore>,
     id: String,
 ) -> Result<(), String> {
-    connection_remove_impl(&state, &id).map_err(|e| e.to_string())
+    connection_remove_impl(&state, &id).map_err(|e| e.to_string())?;
+    mirror_api_key(&secrets, &id, None);
+    Ok(())
 }
 
 /// Probes reachability without persisting anything -- lets the Connections
@@ -496,26 +576,25 @@ pub async fn connection_refresh_models_impl(
 }
 
 /// Tauri command wrapping [`connection_refresh_models_impl`]. Looks up the
-/// connection's stored kind/base URL/key to rebuild its provider, then
-/// re-runs discovery. Returns `Err` both when the connection is unknown
-/// and when discovery degrades to manual entry -- the frontend
-/// distinguishes the latter by falling back to the manual-id control
-/// (`model_add_manual`), per B7's plan.
+/// connection's stored kind/base URL to rebuild its provider, resolving the
+/// key via [`resolve_api_key`] (B23: secure storage first, the plaintext DB
+/// column as fallback) so a cloud connection's refresh actually
+/// authenticates. Returns `Err` both when the connection is unknown and
+/// when discovery degrades to manual entry -- the frontend distinguishes
+/// the latter by falling back to the manual-id control (`model_add_manual`),
+/// per B7's plan.
 #[tauri::command]
 pub async fn connection_refresh_models(
     state: tauri::State<'_, ConnectionStore>,
+    secrets: tauri::State<'_, SecretStore>,
     id: String,
 ) -> Result<Connection, String> {
     let existing = state
         .get(&id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("no connection with id {id}"))?;
-    let api_key = state.api_key(&id).map_err(|e| e.to_string())?;
-    let provider = provider_for(
-        &existing.provider_kind,
-        &existing.base_url,
-        api_key.as_deref().unwrap_or(""),
-    );
+    let api_key = resolve_api_key(&state, &secrets, &id).map_err(|e| e.to_string())?;
+    let provider = provider_for(&existing.provider_kind, &existing.base_url, &api_key);
     connection_refresh_models_impl(&state, provider.as_ref(), &id)
         .await
         .map_err(|e| e.to_string())?
@@ -548,6 +627,7 @@ pub fn model_add_manual(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::Manager as _;
 
     fn new_store() -> ConnectionStore {
         ConnectionStore::open_in_memory().expect("failed to open in-memory store")
@@ -783,6 +863,210 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(store.list().unwrap(), vec![]);
+    }
+
+    // ── resolve_api_key / mirror_api_key (B23 reconciliation) ──
+
+    /// Minimal RAII temp-dir guard for a `SecretStore` (mirrors
+    /// `TempDbPath` above / `secrets.rs`'s own `TempDir`).
+    struct TempSecretsDir(std::path::PathBuf);
+
+    impl TempSecretsDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "redrafter_connections_secrets_{label}_{}_{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            Self(path)
+        }
+    }
+
+    impl Drop for TempSecretsDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn new_secret_store(label: &str) -> (SecretStore, TempSecretsDir) {
+        let dir = TempSecretsDir::new(label);
+        let store = SecretStore::open(&dir.0).expect("failed to open secret store");
+        (store, dir)
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_secure_storage_over_the_plaintext_db_column() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("prefers-secure");
+        let added = store
+            .add("openai", "https://api.openai.com", Some("sk-db"), &[])
+            .unwrap();
+        secrets.set(&added.id, "sk-secure").unwrap();
+
+        assert_eq!(
+            resolve_api_key(&store, &secrets, &added.id).unwrap(),
+            "sk-secure"
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_falls_back_to_the_db_column_when_secure_storage_has_nothing() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("falls-back");
+        let added = store
+            .add("openai", "https://api.openai.com", Some("sk-db-only"), &[])
+            .unwrap();
+
+        assert_eq!(
+            resolve_api_key(&store, &secrets, &added.id).unwrap(),
+            "sk-db-only"
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_is_empty_for_a_keyless_connection() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("keyless");
+        let added = store
+            .add("ollama", "http://localhost:11434", None, &[])
+            .unwrap();
+
+        assert_eq!(resolve_api_key(&store, &secrets, &added.id).unwrap(), "");
+    }
+
+    #[test]
+    fn mirror_api_key_sets_a_non_empty_key_and_clears_a_missing_one() {
+        let (secrets, _dir) = new_secret_store("mirror");
+
+        mirror_api_key(&secrets, "conn-1", Some("sk-mirrored"));
+        assert_eq!(secrets.get("conn-1").unwrap(), Some("sk-mirrored".to_string()));
+
+        mirror_api_key(&secrets, "conn-1", None);
+        assert_eq!(secrets.get("conn-1").unwrap(), None);
+    }
+
+    // ── connection_add / connection_edit / connection_remove / \
+    //    connection_refresh_models command wrappers mirror into \
+    //    SecretStore (B23) ──
+
+    fn managed_app_with_stores(secrets_dir: &Path) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .expect("failed to build mock app");
+        app.manage(new_store());
+        app.manage(SecretStore::open(secrets_dir).expect("failed to open secret store"));
+        app
+    }
+
+    #[tokio::test]
+    async fn connect_store_and_mirror_key_persists_the_key_into_secure_storage() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("connect-mirror");
+        let provider = FakeProvider {
+            available: true,
+            models: vec!["gpt-4o-mini".to_string()],
+        };
+
+        let connection = connect_store_and_mirror_key(
+            &store,
+            &secrets,
+            &provider,
+            "openai",
+            "https://api.openai.com",
+            "sk-add",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            secrets.get(&connection.id).unwrap(),
+            Some("sk-add".to_string())
+        );
+        // The plaintext DB column is still written too (the fallback
+        // `resolve_api_key` relies on).
+        assert_eq!(
+            store.api_key(&connection.id).unwrap(),
+            Some("sk-add".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_store_and_mirror_key_mirrors_nothing_for_a_keyless_connection() {
+        let store = new_store();
+        let (secrets, _dir) = new_secret_store("connect-mirror-keyless");
+        let provider = FakeProvider {
+            available: true,
+            models: vec![],
+        };
+
+        let connection = connect_store_and_mirror_key(
+            &store,
+            &secrets,
+            &provider,
+            "ollama",
+            "http://localhost:11434",
+            "",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(secrets.get(&connection.id).unwrap(), None);
+    }
+
+    #[test]
+    fn connection_edit_command_mirrors_a_changed_key_but_leaves_it_when_unspecified() {
+        let dir = TempSecretsDir::new("cmd-edit");
+        let app = managed_app_with_stores(&dir.0);
+        let added = app
+            .state::<ConnectionStore>()
+            .add("openai", "https://api.openai.com", Some("sk-old"), &[])
+            .unwrap();
+        app.state::<SecretStore>().set(&added.id, "sk-old").unwrap();
+
+        // Editing without an `api_key` at all must not touch secure storage.
+        connection_edit(
+            app.state(),
+            app.state(),
+            added.id.clone(),
+            Some("https://api.example.com".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            app.state::<SecretStore>().get(&added.id).unwrap(),
+            Some("sk-old".to_string())
+        );
+
+        // An explicit new key mirrors into secure storage too.
+        connection_edit(
+            app.state(),
+            app.state(),
+            added.id.clone(),
+            None,
+            Some("sk-new".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            app.state::<SecretStore>().get(&added.id).unwrap(),
+            Some("sk-new".to_string())
+        );
+    }
+
+    #[test]
+    fn connection_remove_command_clears_the_secure_storage_key() {
+        let dir = TempSecretsDir::new("cmd-remove");
+        let app = managed_app_with_stores(&dir.0);
+        let added = app
+            .state::<ConnectionStore>()
+            .add("openai", "https://api.openai.com", Some("sk-doomed"), &[])
+            .unwrap();
+        app.state::<SecretStore>().set(&added.id, "sk-doomed").unwrap();
+
+        connection_remove(app.state(), app.state(), added.id.clone()).unwrap();
+
+        assert_eq!(app.state::<SecretStore>().get(&added.id).unwrap(), None);
     }
 
     // ── provider_for (closing the A7 handoff) ──

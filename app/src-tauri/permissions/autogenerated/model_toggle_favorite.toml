@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-model-toggle-favorite"
+description = "Enables the model_toggle_favorite command without any pre-configured scope."
+commands.allow = ["model_toggle_favorite"]
+
+[[permission]]
+identifier = "deny-model-toggle-favorite"
+description = "Denies the model_toggle_favorite command without any pre-configured scope."
+commands.deny = ["model_toggle_favorite"]
