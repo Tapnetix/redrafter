@@ -19,6 +19,7 @@
 use crate::PlatformOps;
 use accessibility::{AXAttribute, AXUIElement};
 use anyhow::{anyhow, Context, Result};
+use core_foundation::base::{CFType, TCFType};
 use core_foundation::string::CFString;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -32,16 +33,28 @@ impl MacosOps {
         Self
     }
 
+    /// A generic (untyped) `AXAttribute<CFType>` for `name`. The
+    /// `accessibility` 0.1.x crate only predefines a handful of typed
+    /// attributes (via its `define_attributes!` macro) and neither
+    /// `AXFocusedUIElement` nor `AXSelectedText` is among them, so we build
+    /// them by name and downcast the returned `CFType` ourselves.
+    fn attr(name: &'static str) -> AXAttribute<CFType> {
+        AXAttribute::new(&CFString::from_static_string(name))
+    }
+
     /// The system-wide currently-focused UI element, e.g. a text field or
     /// text view in whatever app the user is in.
     fn focused_element() -> Result<AXUIElement> {
-        AXUIElement::system_wide()
-            .attribute(&AXAttribute::focused_uielement())
-            .map_err(|e| anyhow!("no focused UI element: {e:?}"))
+        let value = AXUIElement::system_wide()
+            .attribute(&Self::attr("AXFocusedUIElement"))
+            .map_err(|e| anyhow!("no focused UI element: {e:?}"))?;
+        value
+            .downcast_into::<AXUIElement>()
+            .ok_or_else(|| anyhow!("AXFocusedUIElement was not an AXUIElement"))
     }
 
-    fn selected_text_attribute() -> AXAttribute<CFString> {
-        AXAttribute::new(&CFString::from_static_string("AXSelectedText"))
+    fn selected_text_attribute() -> AXAttribute<CFType> {
+        Self::attr("AXSelectedText")
     }
 }
 
@@ -57,13 +70,19 @@ impl PlatformOps for MacosOps {
         let value = element
             .attribute(&Self::selected_text_attribute())
             .map_err(|e| anyhow!("AXSelectedText read failed: {e:?}"))?;
-        Ok(value.to_string())
+        let text = value
+            .downcast_into::<CFString>()
+            .ok_or_else(|| anyhow!("AXSelectedText was not a string"))?;
+        Ok(text.to_string())
     }
 
     fn ax_write_selection(&self, text: &str) -> Result<()> {
         let element = Self::focused_element()?;
         element
-            .set_attribute(&Self::selected_text_attribute(), CFString::new(text))
+            .set_attribute(
+                &Self::selected_text_attribute(),
+                CFString::new(text).as_CFType(),
+            )
             .map_err(|e| anyhow!("AXSelectedText write failed: {e:?}"))?;
         Ok(())
     }
