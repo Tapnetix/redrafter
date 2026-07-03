@@ -145,6 +145,16 @@ export interface TestData {
    * placeholder (C4).
    */
   historyRerefineRefined?: string;
+  /**
+   * When set, a `hotkey_set` call for exactly this combo (e.g.
+   * `"Ctrl+Alt+T"`) resolves with `{ ok: false, conflict: true }` instead of
+   * succeeding -- mirroring `hotkey.rs`'s `apply_combo` reporting the combo
+   * already registered elsewhere -- so a spec can drive the General
+   * screen's rebind-conflict state (C6/S34) without a real conflicting
+   * registration. Every other combo still resolves `{ ok: true, conflict:
+   * false }` and is persisted (see `../mocks/tauri-mock.ts`).
+   */
+  hotkeyConflictCombo?: string;
 }
 
 export const DEFAULT_TEST_DATA: TestData = {
