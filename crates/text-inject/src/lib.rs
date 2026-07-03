@@ -1,5 +1,6 @@
-//! text-inject: capture and inject text via macOS Accessibility (AX)
-//! APIs, falling back to the clipboard when AX access fails.
+//! text-inject: capture and inject text via the platform accessibility
+//! API (macOS Accessibility / Windows UI Automation), falling back to the
+//! clipboard when that fails.
 //!
 //! The public entry points are [`capture()`] and [`inject()`]. Both are
 //! AX-first: they try the accessibility path, verify it worked, and only
@@ -12,12 +13,14 @@
 //! `#[cfg(target_os = "macos")]`, since it depends on `AXUIElement` and
 //! command-line tools (`pbcopy`/`pbpaste`/`osascript`) that only exist on
 //! macOS. The real Linux implementation lives in [`linux`] behind
-//! `#[cfg(target_os = "linux")]`, shelling out to `xclip`/`xsel`/`xdotool`
-//! on X11 or `wl-clipboard`/`ydotool`/`wtype` on Wayland (session detected
-//! at runtime). On every other platform `capture()`/`inject()` return an
-//! "unsupported platform" error, and this crate still compiles and its
-//! platform-agnostic orchestration logic (in [`capture`]/[`inject`]) is
-//! unit-tested via a fake [`PlatformOps`] in `tests/fallback_test.rs`.
+//! `#[cfg(target_os = "linux")]` (X11 `xclip`/`xsel`/`xdotool` or Wayland
+//! `wl-clipboard`/`ydotool`/`wtype`, session detected at runtime); the real
+//! Windows implementation lives in [`windows`] behind
+//! `#[cfg(target_os = "windows")]` (UI Automation/SendInput/Win32 clipboard).
+//! On every other platform `capture()`/`inject()` return an "unsupported
+//! platform" error, and this crate still compiles and its platform-agnostic
+//! orchestration logic (in [`capture`]/[`inject`]) is unit-tested via a fake
+//! [`PlatformOps`] in `tests/fallback_test.rs`.
 
 mod capture;
 mod inject;
@@ -27,6 +30,17 @@ mod macos;
 
 #[cfg(target_os = "linux")]
 mod linux;
+
+#[cfg(target_os = "windows")]
+mod windows;
+
+// Pure text-processing helpers for the Windows backend. Compiled on
+// Windows (where `windows.rs` uses them for real) and under `cfg(test)`
+// on every OS, so the UIA-selection text munging can still be unit
+// tested on this Linux dev host even though `windows.rs` itself (gated to
+// `cfg(target_os = "windows")`) cannot be built or run here.
+#[cfg(any(target_os = "windows", test))]
+mod windows_util;
 
 pub use capture::{capture_with, CaptureSource, Captured};
 pub use inject::inject_with;
@@ -84,13 +98,21 @@ pub fn capture() -> Result<Captured> {
     capture::capture_with(&ops)
 }
 
-/// Capture is only implemented on macOS and Linux; other platforms
-/// report the selection as unavailable rather than silently returning
-/// nothing.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Capture the current text selection on Windows: UI Automation
+/// TextPattern first, clipboard fallback (see [`windows`] module docs).
+#[cfg(target_os = "windows")]
+pub fn capture() -> Result<Captured> {
+    let ops = windows::WindowsOps::new();
+    capture::capture_with(&ops)
+}
+
+/// Capture is only implemented on macOS, Linux, and Windows; other
+/// platforms report the selection as unavailable rather than silently
+/// returning nothing.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub fn capture() -> Result<Captured> {
     Err(anyhow::anyhow!(
-        "Platform unsupported: text-inject capture is only available on macOS and Linux"
+        "Platform unsupported: text-inject capture is only available on macOS, Linux, and Windows"
     ))
 }
 
@@ -111,13 +133,22 @@ pub fn inject(text: &str) -> Result<()> {
     inject::inject_with(&ops, text)
 }
 
-/// Inject is only implemented on macOS and Linux; other platforms report
-/// the injection target as unavailable rather than silently doing
-/// nothing.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Inject `text` on Windows: UIA has no reliable selection-write, so this
+/// always takes the clipboard save/write/paste (`SendInput` Ctrl+V)/
+/// verify/restore fallback (see [`windows`] module docs).
+#[cfg(target_os = "windows")]
+pub fn inject(text: &str) -> Result<()> {
+    let ops = windows::WindowsOps::new();
+    inject::inject_with(&ops, text)
+}
+
+/// Inject is only implemented on macOS, Linux, and Windows; other
+/// platforms report the injection target as unavailable rather than
+/// silently doing nothing.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub fn inject(_text: &str) -> Result<()> {
     Err(anyhow::anyhow!(
-        "Platform unsupported: text-inject inject is only available on macOS and Linux"
+        "Platform unsupported: text-inject inject is only available on macOS, Linux, and Windows"
     ))
 }
 
@@ -146,7 +177,7 @@ mod linux_wiring_tests {
     }
 }
 
-#[cfg(all(test, not(any(target_os = "macos", target_os = "linux"))))]
+#[cfg(all(test, not(any(target_os = "macos", target_os = "linux", target_os = "windows"))))]
 mod non_macos_tests {
     use super::*;
 
