@@ -86,6 +86,40 @@ async fn chat_sends_system_instruction_separately_from_contents() {
 }
 
 #[tokio::test]
+async fn chat_returns_err_on_non_2xx_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-1.5-flash:generateContent"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {"code": 400, "message": "bad request"}
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = GeminiProvider::new(&server.uri(), "test-key");
+    let result = provider.chat(&sample_request(), CancellationToken::new()).await;
+
+    assert!(result.is_err(), "non-2xx chat response should be an error");
+}
+
+#[tokio::test]
+async fn list_models_returns_err_on_non_2xx_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/models"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+        .mount(&server)
+        .await;
+
+    let provider = GeminiProvider::new(&server.uri(), "test-key");
+    let result = provider.list_models().await;
+
+    assert!(result.is_err(), "non-2xx list_models response should be an error");
+}
+
+#[tokio::test]
 async fn list_models_returns_model_ids_stripped_of_prefix() {
     let server = MockServer::start().await;
 

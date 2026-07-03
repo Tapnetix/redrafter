@@ -201,6 +201,9 @@ impl LlmProvider for GeminiProvider {
             .await
             .context("failed to parse Gemini chat response")?;
 
+        // If `candidates` is empty (e.g. the response was blocked by safety
+        // filters), this intentionally yields an empty string rather than
+        // erroring — callers see an empty completion, not a failure.
         let text = parsed
             .candidates
             .into_iter()

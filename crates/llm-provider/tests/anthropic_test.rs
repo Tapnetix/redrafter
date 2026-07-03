@@ -76,6 +76,45 @@ async fn chat_sends_system_prompt_separately_from_messages() {
     );
     assert_eq!(messages[0]["role"], "user");
     assert_eq!(messages[0]["content"], "Hi");
+
+    let max_tokens = body["max_tokens"]
+        .as_u64()
+        .expect("max_tokens must be present and numeric (Anthropic requires it)");
+    assert!(max_tokens > 0, "max_tokens must be non-zero");
+}
+
+#[tokio::test]
+async fn chat_returns_err_on_non_2xx_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {"type": "invalid_request_error", "message": "bad request"}
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(&server.uri(), "test-key");
+    let result = provider.chat(&sample_request(), CancellationToken::new()).await;
+
+    assert!(result.is_err(), "non-2xx chat response should be an error");
+}
+
+#[tokio::test]
+async fn list_models_returns_err_on_non_2xx_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new(&server.uri(), "test-key");
+    let result = provider.list_models().await;
+
+    assert!(result.is_err(), "non-2xx list_models response should be an error");
 }
 
 #[tokio::test]
