@@ -7,6 +7,8 @@ vi.mock('@/lib/ipc', () => ({
   getPermissionStatus: vi.fn(),
   settingsGet: vi.fn(),
   settingsSet: vi.fn(),
+  hotkeySet: vi.fn(),
+  setLaunchAtLogin: vi.fn(),
 }));
 
 const mockedIpc = vi.mocked(ipc);
@@ -31,6 +33,8 @@ describe('General', () => {
     mockedIpc.getPermissionStatus.mockResolvedValue({ granted: true });
     mockedIpc.settingsGet.mockResolvedValue(null);
     mockedIpc.settingsSet.mockResolvedValue(undefined);
+    mockedIpc.hotkeySet.mockResolvedValue({ ok: true, conflict: false });
+    mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
   });
 
   it('shows granted permission status, the hotkey, active-model summary, and the menu-bar link', async () => {
@@ -82,5 +86,121 @@ describe('General', () => {
 
     expect(mockedIpc.settingsSet).toHaveBeenCalledWith('theme', 'dark');
     expect(screen.getByTestId('theme-dark')).toHaveClass('active');
+  });
+});
+
+describe('Hotkey rebind dialog (C6/S34)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockedIpc.getPermissionStatus.mockResolvedValue({ granted: true });
+    mockedIpc.settingsGet.mockImplementation((key: string) =>
+      Promise.resolve(key === 'hotkey_combo' ? 'Ctrl+Alt+R' : null),
+    );
+    mockedIpc.settingsSet.mockResolvedValue(undefined);
+    mockedIpc.hotkeySet.mockResolvedValue({ ok: true, conflict: false });
+    mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
+  });
+
+  async function openDialog() {
+    render(<General />);
+    await waitFor(() => expect(screen.getByTestId('hotkey-value')).toHaveTextContent('⌃⌥R'));
+    fireEvent.click(screen.getByTestId('hotkey-change'));
+  }
+
+  it('opens the capture dialog when hotkey-change is clicked', async () => {
+    await openDialog();
+
+    expect(screen.getByTestId('hotkey-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('hotkey-capture')).toBeInTheDocument();
+    expect(screen.getByTestId('hotkey-cancel')).toBeInTheDocument();
+    expect(screen.getByTestId('hotkey-save')).toBeInTheDocument();
+  });
+
+  it('captures a key combo, saves it via hotkeySet, and updates the shown hotkey on success', async () => {
+    await openDialog();
+
+    fireEvent.keyDown(screen.getByTestId('hotkey-capture'), { key: 'S', ctrlKey: true, altKey: true });
+    expect(screen.getByTestId('hotkey-capture')).toHaveTextContent('⌃⌥S');
+
+    fireEvent.click(screen.getByTestId('hotkey-save'));
+
+    await waitFor(() => expect(mockedIpc.hotkeySet).toHaveBeenCalledWith('Ctrl+Alt+S'));
+    await waitFor(() => expect(screen.getByTestId('hotkey-value')).toHaveTextContent('⌃⌥S'));
+    expect(screen.queryByTestId('hotkey-modal')).not.toBeInTheDocument();
+  });
+
+  it('shows a conflict warning and keeps the previous hotkey when hotkeySet reports a conflict', async () => {
+    mockedIpc.hotkeySet.mockResolvedValue({ ok: false, conflict: true });
+    await openDialog();
+
+    fireEvent.keyDown(screen.getByTestId('hotkey-capture'), { key: 'T', ctrlKey: true, altKey: true });
+    fireEvent.click(screen.getByTestId('hotkey-save'));
+
+    await waitFor(() => expect(screen.getByTestId('hotkey-conflict')).toBeInTheDocument());
+    expect(screen.getByTestId('hotkey-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('hotkey-value')).toHaveTextContent('⌃⌥R');
+  });
+
+  it('shows a conflict warning when hotkeySet rejects outright', async () => {
+    mockedIpc.hotkeySet.mockRejectedValue(new Error('backend unavailable'));
+    await openDialog();
+
+    fireEvent.keyDown(screen.getByTestId('hotkey-capture'), { key: 'T', ctrlKey: true, altKey: true });
+    fireEvent.click(screen.getByTestId('hotkey-save'));
+
+    await waitFor(() => expect(screen.getByTestId('hotkey-conflict')).toBeInTheDocument());
+    expect(screen.getByTestId('hotkey-value')).toHaveTextContent('⌃⌥R');
+  });
+
+  it('closes the dialog without changing the hotkey when hotkey-cancel is clicked', async () => {
+    await openDialog();
+
+    fireEvent.keyDown(screen.getByTestId('hotkey-capture'), { key: 'S', ctrlKey: true, altKey: true });
+    fireEvent.click(screen.getByTestId('hotkey-cancel'));
+
+    expect(mockedIpc.hotkeySet).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('hotkey-modal')).not.toBeInTheDocument();
+    expect(screen.getByTestId('hotkey-value')).toHaveTextContent('⌃⌥R');
+  });
+});
+
+describe('Launch-at-login toggle (C6)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockedIpc.getPermissionStatus.mockResolvedValue({ granted: true });
+    mockedIpc.settingsSet.mockResolvedValue(undefined);
+    mockedIpc.hotkeySet.mockResolvedValue({ ok: true, conflict: false });
+    mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
+  });
+
+  it('reflects the persisted state and toggles via setLaunchAtLogin', async () => {
+    mockedIpc.settingsGet.mockImplementation((key: string) =>
+      Promise.resolve(key === 'launch_at_login' ? 'false' : null),
+    );
+
+    render(<General />);
+
+    const toggle = await screen.findByTestId('general-launch-login');
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(mockedIpc.setLaunchAtLogin).toHaveBeenCalledWith(true));
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('reverts the toggle when setLaunchAtLogin rejects', async () => {
+    mockedIpc.settingsGet.mockResolvedValue(null);
+    mockedIpc.setLaunchAtLogin.mockRejectedValue(new Error('nope'));
+
+    render(<General />);
+
+    const toggle = await screen.findByTestId('general-launch-login');
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(mockedIpc.setLaunchAtLogin).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
   });
 });

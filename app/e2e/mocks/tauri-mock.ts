@@ -470,9 +470,17 @@ export function getTauriMockScript(data: TestData): string {
             return null;
           }
 
-          // ── Hotkey (A6/A14) ──
-          case 'hotkey_set':
+          // ── Hotkey (A6/A14, rebind persistence + conflict C2/C6) ──
+          case 'hotkey_set': {
+            const combo = args && args.combo;
+            if (TEST_DATA.hotkeyConflictCombo && combo === TEST_DATA.hotkeyConflictCombo) {
+              // Mirrors hotkey.rs's apply_combo: a conflict never persists
+              // and never touches the previously-registered combo.
+              return { ok: false, conflict: true };
+            }
+            state.settings.hotkey_combo = combo;
             return { ok: true, conflict: false };
+          }
 
           // ── History (C4): list/restore/re-refine past refines ──
           case 'history_list':
