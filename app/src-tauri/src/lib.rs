@@ -113,6 +113,13 @@ const ON_FAILURE_KEY: &str = "behavior.on_failure";
 /// `["gpt-5.1", "qwen3:8b"]`), each resolved to a connection that has it
 /// enabled. Only consulted when [`ON_FAILURE_KEY`] is `"fallback"`.
 const FALLBACK_CHAIN_KEY: &str = "behavior.fallback_chain";
+/// Settings key for how many times EACH model in the refine chain is tried
+/// before advancing to the next (Behavior/B6b's `behavior.retry_count`, a
+/// "1"/"2"/"3" string). Read by [`retry_attempts_from_settings`] and threaded
+/// into [`Orchestrator::refine_with`]'s per-model retry loop; unset or
+/// unparseable defaults to a single attempt per model (the original
+/// try-each-model-once behavior).
+const RETRY_COUNT_KEY: &str = "behavior.retry_count";
 /// Settings key `tray_pause`/`tray_resume` (B17/B23) persist the paused flag
 /// under; also read by [`run_refine`]'s paused gate. Shared with the
 /// frontend's own `Tray.tsx`, which persists/reads the same key name.
@@ -213,10 +220,11 @@ fn build_provider(
 ///     connection are skipped (a best-effort chain — an unresolvable entry
 ///     shouldn't abort the whole refine).
 ///
-/// forward-ref: `behavior.retry_count` (also written by `Behavior.tsx`) has
-/// no orchestrator retry concept to consume yet — the chain tries each model
-/// once. Wiring per-model retries is Phase C scope; the setting is read
-/// there once that loop exists.
+/// The companion `behavior.retry_count` setting (how many times each of
+/// these models is retried before advancing to the next) is read separately
+/// by [`retry_attempts_from_settings`] and applied inside
+/// [`Orchestrator::refine_with`]'s retry loop — it governs *how hard* each
+/// model is tried, orthogonal to *which* models this function resolves.
 fn resolve_fallback_targets(
     connections: &ConnectionStore,
     settings: &SettingsStore,
@@ -270,6 +278,21 @@ fn inject_mode_from_settings(settings: &SettingsStore) -> Result<InjectMode, Str
         Some("review") => InjectMode::Review,
         _ => InjectMode::Blind,
     })
+}
+
+/// Reads how many times each model in the refine chain should be tried
+/// before advancing to the next (Behavior/B6b's `behavior.retry_count`), as
+/// the `attempts` argument [`Orchestrator::refine_with`] expects. Unset or
+/// unparseable defaults to `1` — a single attempt per model, preserving the
+/// original try-each-model-once behavior — and a stored `0` is likewise
+/// clamped up to `1` (a chain that never calls any model is never what the
+/// user meant).
+fn retry_attempts_from_settings(settings: &SettingsStore) -> Result<u32, String> {
+    let raw = settings.get(RETRY_COUNT_KEY).map_err(|e| e.to_string())?;
+    Ok(raw
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(1)
+        .max(1))
 }
 
 /// Whether capturing is currently paused (`tray_pause`/`tray_resume`, B17).
@@ -366,6 +389,7 @@ pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
         .map_err(|e| e.to_string())?;
     let mode = inject_mode_from_settings(settings)?;
     let quote_mode = quote_mode_from_settings(settings)?;
+    let attempts = retry_attempts_from_settings(settings)?;
     let opts = BuildOptions {
         direction,
         model,
@@ -378,7 +402,7 @@ pub(crate) async fn execute_refine<C: TextCapture, I: TextInjector>(
 
     let orch = Orchestrator::new(capture, injector, provider);
     let flow = orch
-        .refine_with(&opts, &fallbacks, mode, Some(presets), cancel)
+        .refine_with(&opts, &fallbacks, mode, Some(presets), attempts, cancel)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -513,6 +537,54 @@ fn emit_feedback_cues<R: tauri::Runtime>(
     }
 }
 
+/// The native tray's reflected refine state (SC11): busy while a refine is in
+/// flight, then back to its resting state — or an error flash if the refine
+/// failed. Mapped to the tray tooltip by [`SystemTrayStatus`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RefineStatus {
+    /// A refine is in flight — the tray tooltip reflects "Refining…".
+    Refining,
+    /// The refine finished successfully — the tray returns to its resting
+    /// idle/paused tooltip (`tray::refresh_tray`).
+    Idle,
+    /// The refine failed — the tray tooltip flashes an error state.
+    Error,
+}
+
+/// Seam over the native tray's transient status reflection so [`run_refine`]'s
+/// drive-the-tray behavior (SC11) is unit-testable under `MockRuntime`, where
+/// no real tray icon exists and `tray::set_status_message`/`tray::refresh_tray`
+/// are silent no-ops — a recording fake stands in for the tray in tests and
+/// captures the exact status sequence a refine drives.
+pub(crate) trait TrayStatusSink {
+    fn set_refine_status<R: tauri::Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+        status: RefineStatus,
+    );
+}
+
+/// Production [`TrayStatusSink`]: drives the real native tray tooltip. A
+/// no-op wherever there's no attached tray icon (`tray_by_id` returns `None`
+/// under `MockRuntime`), same as every other tray touch in this codebase.
+pub(crate) struct SystemTrayStatus;
+
+impl TrayStatusSink for SystemTrayStatus {
+    fn set_refine_status<R: tauri::Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+        status: RefineStatus,
+    ) {
+        match status {
+            RefineStatus::Refining => tray::set_status_message(app, "Refining…"),
+            // Restore the resting Ready/Paused tooltip rather than leaving a
+            // transient "idle" string on it.
+            RefineStatus::Idle => tray::refresh_tray(app),
+            RefineStatus::Error => tray::set_status_message(app, "Refine failed"),
+        }
+    }
+}
+
 /// Thin `AppHandle` wrapper around [`run_refine_with`], pulling the six
 /// managed stores out of Tauri state. This is the one piece that genuinely
 /// needs a running app/handle; the actual gate-and-pipeline logic it
@@ -530,21 +602,31 @@ fn emit_feedback_cues<R: tauri::Runtime>(
 pub(crate) async fn run_refine<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<RefineFlow, String> {
-    run_refine_emit_with_checker(app, &permission::SystemAccessibilityChecker).await
+    run_refine_emit_with_checker(app, &permission::SystemAccessibilityChecker, &SystemTrayStatus)
+        .await
 }
 
-/// [`run_refine`]'s body, generic over the [`AccessibilityChecker`] so the
-/// full emit-cues → gate → pipeline → emit-cues sequence is testable against
-/// a real `AppHandle` (needed to observe the emitted feedback events) with a
-/// fake granted checker — `run_refine` always passes the real
-/// `SystemAccessibilityChecker`, which is denied in a headless test process on
-/// macOS (`AXIsProcessTrusted`) and would otherwise short-circuit at the gate
-/// before the asserted behavior.
-async fn run_refine_emit_with_checker<R: tauri::Runtime, C: AccessibilityChecker>(
+/// [`run_refine`]'s body, generic over the [`AccessibilityChecker`] and the
+/// [`TrayStatusSink`] so the full status→emit-cues→gate→pipeline→emit-cues→status
+/// sequence is testable against a real `AppHandle` (needed to observe the
+/// emitted feedback events) with a fake granted checker and a recording tray
+/// sink — `run_refine` always passes the real `SystemAccessibilityChecker`
+/// (denied in a headless test process on macOS via `AXIsProcessTrusted`, which
+/// would otherwise short-circuit at the gate before the asserted behavior) and
+/// the real [`SystemTrayStatus`].
+///
+/// Drives the native tray status (SC11) around the pipeline: "Refining…" at
+/// the start, then back to the resting idle tooltip on success or an error
+/// flash on failure — bracketing the feedback cue events, so the tray reflects
+/// the same in-flight/done transition the frontend spinner/HUD do.
+async fn run_refine_emit_with_checker<R: tauri::Runtime, C: AccessibilityChecker, S: TrayStatusSink>(
     app: &tauri::AppHandle<R>,
     checker: &C,
+    tray_status: &S,
 ) -> Result<RefineFlow, String> {
     let settings = app.state::<SettingsStore>();
+
+    tray_status.set_refine_status(app, RefineStatus::Refining);
 
     if let Ok(cues) = feedback::on_refine_start(&settings) {
         emit_feedback_cues(app, REFINE_FEEDBACK_START_EVENT, cues);
@@ -560,6 +642,15 @@ async fn run_refine_emit_with_checker<R: tauri::Runtime, C: AccessibilityChecker
         &app.state::<RefineState>(),
     )
     .await;
+
+    tray_status.set_refine_status(
+        app,
+        if result.is_ok() {
+            RefineStatus::Idle
+        } else {
+            RefineStatus::Error
+        },
+    );
 
     if let Ok(cues) = feedback::on_refine_done(&settings) {
         emit_feedback_cues(app, REFINE_FEEDBACK_DONE_EVENT, cues);
@@ -1051,6 +1142,30 @@ mod tests {
             provider.provider_name(),
             llm_provider::AnthropicProvider::new("x", "y").provider_name()
         );
+    }
+
+    // ---- retry_attempts_from_settings (behavior.retry_count) ----
+
+    #[test]
+    fn retry_attempts_defaults_to_one_when_unset() {
+        let settings = new_settings();
+        assert_eq!(retry_attempts_from_settings(&settings), Ok(1));
+    }
+
+    #[test]
+    fn retry_attempts_reads_the_stored_count() {
+        let settings = new_settings();
+        settings.set(RETRY_COUNT_KEY, "3").unwrap();
+        assert_eq!(retry_attempts_from_settings(&settings), Ok(3));
+    }
+
+    #[test]
+    fn retry_attempts_clamps_unparseable_or_zero_up_to_one() {
+        let settings = new_settings();
+        settings.set(RETRY_COUNT_KEY, "0").unwrap();
+        assert_eq!(retry_attempts_from_settings(&settings), Ok(1));
+        settings.set(RETRY_COUNT_KEY, "not-a-number").unwrap();
+        assert_eq!(retry_attempts_from_settings(&settings), Ok(1));
     }
 
     // ---- permission_gate ----
@@ -1832,6 +1947,22 @@ mod tests {
     // (a real `trayIcon` config needs the main thread to attach, which a
     // test harness running off it can't provide).
 
+    /// Recording [`TrayStatusSink`] fake: captures the exact sequence of
+    /// [`RefineStatus`] transitions `run_refine` drives, standing in for the
+    /// real tray (a no-op under `MockRuntime`, where no tray icon exists).
+    #[derive(Clone, Default)]
+    struct RecordingTrayStatus(Arc<Mutex<Vec<RefineStatus>>>);
+
+    impl TrayStatusSink for RecordingTrayStatus {
+        fn set_refine_status<R: tauri::Runtime>(
+            &self,
+            _app: &tauri::AppHandle<R>,
+            status: RefineStatus,
+        ) {
+            self.0.lock().unwrap().push(status);
+        }
+    }
+
     fn feedback_test_app() -> tauri::App<tauri::test::MockRuntime> {
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1888,7 +2019,9 @@ mod tests {
         // (NO_ACTIVE_MODEL_ERROR) deterministically on every platform — the
         // real checker denies in a headless macOS test process, which would
         // short-circuit at the permission gate before the cues we assert.
-        let result = run_refine_emit_with_checker(&handle, &FakeChecker(true)).await;
+        let result =
+            run_refine_emit_with_checker(&handle, &FakeChecker(true), &RecordingTrayStatus::default())
+                .await;
 
         assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
         // Default settings: spinner on, HUD off, sound on.
@@ -1897,5 +2030,39 @@ mod tests {
             done.lock().unwrap().as_slice(),
             &[serde_json::json!(["spinner", "sound"])]
         );
+    }
+
+    /// Boundary test (SC11): `run_refine` drives the native tray status around
+    /// the pipeline — "Refining…" at the start, then a resting/error state at
+    /// the end. Here the pipeline fails (`NO_ACTIVE_MODEL_ERROR`, no connection
+    /// configured), so the closing transition is `Error`, proving the tray is
+    /// never left stuck showing "Refining…" when a refine fails.
+    #[tokio::test]
+    async fn run_refine_drives_the_native_tray_status_around_the_pipeline() {
+        let app = feedback_test_app();
+        let handle = app.handle().clone();
+
+        let tray_status = RecordingTrayStatus::default();
+        let result =
+            run_refine_emit_with_checker(&handle, &FakeChecker(true), &tray_status).await;
+
+        assert_eq!(result, Err(NO_ACTIVE_MODEL_ERROR.to_string()));
+        assert_eq!(
+            tray_status.0.lock().unwrap().as_slice(),
+            &[RefineStatus::Refining, RefineStatus::Error]
+        );
+    }
+
+    /// The production [`SystemTrayStatus`] maps every [`RefineStatus`] onto a
+    /// native-tray call without panicking. A no-op under `MockRuntime` (no
+    /// tray icon attached), so this just exercises each mapping arm — the
+    /// observable status *sequence* is asserted via the recording sink above.
+    #[test]
+    fn system_tray_status_maps_every_refine_status_without_panicking() {
+        let app = feedback_test_app();
+        let handle = app.handle();
+        for status in [RefineStatus::Refining, RefineStatus::Idle, RefineStatus::Error] {
+            SystemTrayStatus.set_refine_status(handle, status);
+        }
     }
 }

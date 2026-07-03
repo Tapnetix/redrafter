@@ -292,7 +292,7 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
         cancel: CancellationToken,
     ) -> Result<RefineOutcome> {
         let flow = self
-            .refine_with(opts, &[], InjectMode::Blind, None, cancel)
+            .refine_with(opts, &[], InjectMode::Blind, None, 1, cancel)
             .await?;
         Ok(flow.into_outcome())
     }
@@ -319,12 +319,23 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
     /// mutated. Cancellation is honored both within each provider call and
     /// between fallback attempts — a cancelled token stops the chain
     /// rather than working through the remaining models regardless.
+    ///
+    /// `attempts` is how many times EACH model (the primary and each
+    /// fallback) is tried before the chain advances to the next model —
+    /// the Behavior screen's `behavior.retry_count` (`lib.rs`'s
+    /// `retry_attempts_from_settings`), clamped to at least 1. With
+    /// `attempts == 1` this is the original try-each-model-once behavior; with
+    /// `attempts > 1` a model that fails transiently is retried in place
+    /// before its fallback is reached. Cancellation is checked between
+    /// retries too, so a cancelled token stops the retry loop rather than
+    /// burning through every remaining attempt.
     pub async fn refine_with(
         &self,
         opts: &BuildOptions,
         fallbacks: &[FallbackTarget],
         mode: InjectMode,
         presets: Option<&PresetStore>,
+        attempts: u32,
         cancel: CancellationToken,
     ) -> Result<RefineFlow> {
         let original = self.capture.capture()?;
@@ -338,7 +349,7 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
         let (draft, resolved_opts, preset_inject_mode) = resolve_prompt(&original, opts, presets);
         let effective_mode = preset_inject_mode.unwrap_or(mode);
         let response = self
-            .call_with_fallback(&draft, &resolved_opts, fallbacks, cancel)
+            .call_with_fallback(&draft, &resolved_opts, fallbacks, attempts, cancel)
             .await?;
 
         let outcome = RefineOutcome {
@@ -361,9 +372,15 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
 
     /// Calls the primary provider (`resolved_opts.model`), falling back
     /// through `fallbacks` in order on failure until one succeeds or the
-    /// list is exhausted. Checks `cancel` before each fallback attempt (each
-    /// provider's own `chat` already honors `cancel` mid-flight) so a
-    /// cancellation doesn't burn through the rest of the chain regardless.
+    /// list is exhausted. Each model — the primary and every fallback — is
+    /// retried up to `attempts` times ([`try_model`](Self::try_model))
+    /// before the chain advances to the next model, so a transient failure
+    /// (network blip, a momentarily-overloaded model) gets another shot at
+    /// the *same* model before its fallback is reached. Checks `cancel`
+    /// before each fallback attempt (each provider's own `chat` already
+    /// honors `cancel` mid-flight, and [`try_model`](Self::try_model) checks
+    /// it between retries) so a cancellation doesn't burn through the rest of
+    /// the chain regardless.
     ///
     /// On total exhaustion, returns the last error encountered (the
     /// caller's generic-failure branch — nothing is injected and the
@@ -373,10 +390,14 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
         draft: &str,
         resolved_opts: &BuildOptions,
         fallbacks: &[FallbackTarget],
+        attempts: u32,
         cancel: CancellationToken,
     ) -> Result<llm_provider::LlmResponse> {
         let primary_request = prompt_builder::build(draft, resolved_opts);
-        let mut last_err = match self.provider.chat(&primary_request, cancel.clone()).await {
+        let mut last_err = match self
+            .try_model(self.provider.as_ref(), &primary_request, attempts, &cancel)
+            .await
+        {
             Ok(response) => return Ok(response),
             Err(err) => err,
         };
@@ -390,13 +411,51 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
             target_opts.model = target.model.clone();
             let request = prompt_builder::build(draft, &target_opts);
 
-            match target.provider.chat(&request, cancel.clone()).await {
+            match self
+                .try_model(target.provider.as_ref(), &request, attempts, &cancel)
+                .await
+            {
                 Ok(response) => return Ok(response),
                 Err(err) => last_err = err,
             }
         }
 
         Err(last_err)
+    }
+
+    /// Calls one `provider` up to `attempts` times (clamped to at least 1),
+    /// returning the first success or — if every attempt fails — the last
+    /// error. Cancellation is honored both mid-flight (each provider's own
+    /// `chat` observes `cancel`) and *between* retries: a token cancelled
+    /// after a failed attempt stops the retry loop rather than working
+    /// through the remaining attempts regardless.
+    ///
+    /// Only ever sees a provider's own transient/model errors here — the
+    /// sentinel `no_active_model`/`permission_denied`/`paused` rejections are
+    /// produced by the command layer (`lib.rs`) *before* the orchestrator is
+    /// ever reached, so they never enter this retry loop.
+    async fn try_model(
+        &self,
+        provider: &dyn LlmProvider,
+        request: &llm_provider::LlmRequest,
+        attempts: u32,
+        cancel: &CancellationToken,
+    ) -> Result<llm_provider::LlmResponse> {
+        let mut last_err: Option<anyhow::Error> = None;
+        for attempt in 0..attempts.max(1) {
+            // Between retries (not before the first try): a token cancelled
+            // after a failed attempt stops the loop instead of retrying.
+            if attempt > 0 && cancel.is_cancelled() {
+                return Err(last_err
+                    .expect("attempt > 0 means a prior attempt already failed")
+                    .context("refine was cancelled between retry attempts"));
+            }
+            match provider.chat(request, cancel.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(err) => last_err = Some(err),
+            }
+        }
+        Err(last_err.expect("attempts is clamped to at least 1, so the loop runs at least once"))
     }
 
     /// Returns the most recently captured original selection, if any.

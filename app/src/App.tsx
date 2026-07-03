@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useState, type ComponentType } from 'react';
 import NavRail from '@/components/NavRail';
 import Sidebar from '@/components/Sidebar';
+import FeedbackCues from '@/components/FeedbackCues';
 import Onboarding from '@/screens/Onboarding';
 import FirstRun from '@/screens/FirstRun';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
@@ -129,6 +130,10 @@ export default function App() {
 
   return (
     <div className="app" data-testid="app-shell">
+      {/* Global in-flight spinner / completion HUD, driven by the backend's
+          refine feedback-cue events (SC13) — mounted here so it reflects a
+          refine even when the Capture panel isn't the focused surface. */}
+      <FeedbackCues />
       <NavRail active={section} onNavigate={navigate} />
       <Sidebar active={section} onNavigate={navigate} activeModelLabel={modelStore.activeModelLabel} />
       <main className="main">

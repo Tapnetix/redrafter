@@ -152,6 +152,61 @@ mod fallback_and_review_tests {
         }
     }
 
+    /// Fake provider that fails its first `fail_first` calls and then
+    /// succeeds on every subsequent call, counting total calls — to exercise
+    /// the per-model retry loop (a transient failure that a retry recovers
+    /// from vs. one that exhausts the retries and falls through).
+    struct FlakyProvider {
+        model: &'static str,
+        fail_first: u32,
+        calls: Arc<Mutex<u32>>,
+    }
+
+    impl FlakyProvider {
+        fn new(model: &'static str, fail_first: u32) -> Self {
+            Self {
+                model,
+                fail_first,
+                calls: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn call_count(&self) -> u32 {
+            *self.calls.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for FlakyProvider {
+        async fn chat(&self, _request: &LlmRequest, _cancel: CancellationToken) -> Result<LlmResponse> {
+            let call = {
+                let mut calls = self.calls.lock().unwrap();
+                *calls += 1;
+                *calls
+            };
+            if call <= self.fail_first {
+                anyhow::bail!("{} transiently failed on attempt {call}", self.model);
+            }
+            Ok(LlmResponse {
+                text: format!("refined by {}", self.model),
+                model: self.model.to_string(),
+                usage_tokens: None,
+            })
+        }
+
+        async fn list_models(&self) -> Result<Vec<String>> {
+            Ok(vec![self.model.to_string()])
+        }
+
+        async fn is_available(&self) -> bool {
+            true
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "flaky"
+        }
+    }
+
     fn opts(model: &str) -> BuildOptions {
         BuildOptions {
             model: model.to_string(),
@@ -177,6 +232,7 @@ mod fallback_and_review_tests {
                 &[FallbackTarget::new(Arc::new(fallback.clone()), "fallback-model")],
                 InjectMode::Blind,
                 None,
+                1,
                 CancellationToken::new(),
             )
             .await
@@ -208,6 +264,7 @@ mod fallback_and_review_tests {
                 ],
                 InjectMode::Blind,
                 None,
+                1,
                 CancellationToken::new(),
             )
             .await
@@ -234,6 +291,7 @@ mod fallback_and_review_tests {
                 )],
                 InjectMode::Blind,
                 None,
+                1,
                 CancellationToken::new(),
             )
             .await;
@@ -267,6 +325,7 @@ mod fallback_and_review_tests {
                 &[FallbackTarget::new(Arc::new(never_called.clone()), "never-called-model")],
                 InjectMode::Blind,
                 None,
+                1,
                 cancel,
             )
             .await;
@@ -275,6 +334,141 @@ mod fallback_and_review_tests {
         assert!(
             never_called.last_request.lock().unwrap().is_none(),
             "cancellation must stop the chain before a later fallback is tried"
+        );
+    }
+
+    // ---- Per-model retry (behavior.retry_count) ----
+
+    #[tokio::test]
+    async fn retry_count_2_retries_the_same_model_before_advancing_to_the_fallback() {
+        // The primary fails once then succeeds. With `attempts = 2` it gets a
+        // second shot at the *same* model and answers — the fallback is never
+        // reached.
+        let primary = Arc::new(FlakyProvider::new("primary-model", 1));
+        let fallback = RecordingProvider::new("fallback-model");
+        let injector = FakeInjector::default();
+        let orch = Orchestrator::new(
+            FakeCapture("please fix this up".to_string()),
+            injector.clone(),
+            primary.clone(),
+        );
+
+        let flow = orch
+            .refine_with(
+                &opts("primary-model"),
+                &[FallbackTarget::new(Arc::new(fallback.clone()), "fallback-model")],
+                InjectMode::Blind,
+                None,
+                2,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("the primary should succeed on its retry");
+
+        let outcome = flow.into_outcome();
+        // The primary model answered (via its retry), not the fallback.
+        assert_eq!(outcome.model, "primary-model");
+        assert_eq!(injector.injected(), vec!["refined by primary-model".to_string()]);
+        // Two attempts against the primary (fail, then success)...
+        assert_eq!(primary.call_count(), 2);
+        // ...and the fallback was never tried.
+        assert!(
+            fallback.last_request.lock().unwrap().is_none(),
+            "the fallback must not be reached once a retry recovers the primary"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_count_exhausted_advances_to_the_fallback() {
+        // The primary fails on every attempt. With `attempts = 2` it's tried
+        // twice, both fail, and the chain advances to the fallback.
+        let primary = Arc::new(FlakyProvider::new("primary-model", u32::MAX));
+        let fallback = RecordingProvider::new("fallback-model");
+        let orch = Orchestrator::new(
+            FakeCapture("please fix this up".to_string()),
+            FakeInjector::default(),
+            primary.clone(),
+        );
+
+        let flow = orch
+            .refine_with(
+                &opts("primary-model"),
+                &[FallbackTarget::new(Arc::new(fallback.clone()), "fallback-model")],
+                InjectMode::Blind,
+                None,
+                2,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("the fallback should answer once the primary's retries are exhausted");
+
+        assert_eq!(flow.into_outcome().model, "fallback-model");
+        // The primary was tried exactly `attempts` times before advancing.
+        assert_eq!(primary.call_count(), 2);
+    }
+
+    /// Fake provider that cancels a shared token on its first call and then
+    /// fails — to exercise the "cancelled between retries" path: a retry loop
+    /// must stop rather than burn through the remaining attempts.
+    struct CancellingProvider {
+        token: CancellationToken,
+        calls: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CancellingProvider {
+        async fn chat(&self, _request: &LlmRequest, _cancel: CancellationToken) -> Result<LlmResponse> {
+            *self.calls.lock().unwrap() += 1;
+            self.token.cancel();
+            anyhow::bail!("failed, and the token is now cancelled")
+        }
+
+        async fn list_models(&self) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn is_available(&self) -> bool {
+            false
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "cancelling"
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_between_retries_stops_further_attempts_on_the_same_model() {
+        // With `attempts = 3` the primary would normally be tried three times,
+        // but the token is cancelled during the first attempt — so the retry
+        // loop must stop after that one call rather than retrying.
+        let cancel = CancellationToken::new();
+        let calls = Arc::new(Mutex::new(0));
+        let provider = Arc::new(CancellingProvider {
+            token: cancel.clone(),
+            calls: calls.clone(),
+        });
+        let orch = Orchestrator::new(
+            FakeCapture("please fix this up".to_string()),
+            FakeInjector::default(),
+            provider,
+        );
+
+        let result = orch
+            .refine_with(
+                &opts("primary-model"),
+                &[],
+                InjectMode::Blind,
+                None,
+                3,
+                cancel,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            *calls.lock().unwrap(),
+            1,
+            "a token cancelled mid-attempt must stop the retry loop, not burn through every attempt"
         );
     }
 
@@ -290,7 +484,7 @@ mod fallback_and_review_tests {
         );
 
         let flow = orch
-            .refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
+            .refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, 1, CancellationToken::new())
             .await
             .expect("blind refine should succeed");
 
@@ -308,7 +502,7 @@ mod fallback_and_review_tests {
         );
 
         let flow = orch
-            .refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
+            .refine_with(&opts("fake-model"), &[], InjectMode::Review, None, 1, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -332,7 +526,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, 1, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -351,7 +545,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, 1, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -370,7 +564,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, 1, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -403,7 +597,7 @@ mod fallback_and_review_tests {
             Arc::new(RecordingProvider::new("fake-model")),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Review, None, 1, CancellationToken::new())
             .await
             .expect("review refine should succeed");
 
@@ -448,7 +642,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, 1, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -469,7 +663,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, 1, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -499,7 +693,7 @@ mod fallback_and_review_tests {
             quote_mode: QuoteMode::AnswerOnly,
             ..opts("fake-model")
         };
-        orch.refine_with(&opts, &[], InjectMode::Blind, None, CancellationToken::new())
+        orch.refine_with(&opts, &[], InjectMode::Blind, None, 1, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -522,7 +716,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, 1, CancellationToken::new())
             .await
             .expect("refine should succeed");
 
@@ -540,7 +734,7 @@ mod fallback_and_review_tests {
             Arc::new(provider.clone()),
         );
 
-        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, CancellationToken::new())
+        orch.refine_with(&opts("fake-model"), &[], InjectMode::Blind, None, 1, CancellationToken::new())
             .await
             .expect("refine should succeed");
 

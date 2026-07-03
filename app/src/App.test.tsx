@@ -7,6 +7,13 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
+// App now mounts the global `FeedbackCues` overlay, which subscribes to the
+// refine feedback-cue events on mount — stub the event API so these boot-flow
+// tests don't reach into the (absent) Tauri event internals.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
 const mockedInvoke = vi.mocked(invoke);
 
 /**
