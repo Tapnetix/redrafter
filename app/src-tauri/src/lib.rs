@@ -33,6 +33,7 @@ pub mod command_parser;
 pub mod connections;
 pub mod history;
 pub mod hotkey;
+pub mod lifecycle;
 pub mod models;
 pub mod orchestrator;
 pub mod permission;
@@ -54,6 +55,7 @@ use connections::{
     connection_remove, connection_test, model_add_manual, resolve_api_key, ConnectionStore,
 };
 use hotkey::{hotkey_set, HotkeyState};
+use lifecycle::{tray_check_updates, tray_set_launch_login};
 use models::{
     model_disable, model_set_active, model_toggle_favorite, models_list, ollama_pull,
 };
@@ -65,10 +67,7 @@ use permission::{permission_open_settings, permission_status, AccessibilityCheck
 use prompt_builder::{BuildOptions, QuoteMode};
 use secrets::{secrets_delete, secrets_set, secrets_set_key, SecretStore};
 use settings::{settings_get, settings_set, SettingsStore};
-use tray::{
-    tray_check_updates, tray_pause, tray_quit, tray_refine, tray_resume, tray_set_active_model,
-    tray_set_launch_login,
-};
+use tray::{tray_pause, tray_quit, tray_refine, tray_resume, tray_set_active_model};
 
 /// Rejection string `refine` returns when no connection with an enabled
 /// model has been added yet. The frontend (`Capture.tsx`) matches this
@@ -443,7 +442,7 @@ async fn refine<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<RefineFlo
 /// Reacts to an OS-level event for any hotkey registered through
 /// `tauri-plugin-global-shortcut` — the plugin dispatches every registered
 /// shortcut's events through the one `.with_handler` closure `run` installs
-/// below, not just whichever combo is "current" (`register_default` at
+/// below, not just whichever combo is "current" (`register_startup` at
 /// startup and `hotkey_set` rebinds both go through the same plugin
 /// manager). This is that closure's body, pulled out so it's unit-testable
 /// under `tauri::test::MockRuntime` with a synthetic `Shortcut`/
@@ -672,10 +671,13 @@ pub fn run() {
 
             // Global hotkey: best-effort. A headless/CI environment (or one
             // without OS-level shortcut support) shouldn't prevent the rest
-            // of the app from starting.
+            // of the app from starting. Registers a previously rebound combo
+            // (C2's `hotkey_set` persistence) if one was saved, else
+            // `DEFAULT_HOTKEY` -- see `hotkey::register_startup`.
             let hotkey_state = app.state::<HotkeyState>();
-            if let Err(e) = hotkey::register_default(&handle, &hotkey_state) {
-                eprintln!("[hotkey] failed to register default hotkey: {e}");
+            let settings_for_hotkey = app.state::<SettingsStore>();
+            if let Err(e) = hotkey::register_startup(&handle, &hotkey_state, &settings_for_hotkey) {
+                eprintln!("[hotkey] failed to register the startup hotkey: {e}");
             }
 
             if let Err(e) = tray::setup_tray(&handle) {
