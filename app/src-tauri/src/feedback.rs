@@ -40,8 +40,12 @@ pub enum FeedbackCue {
 }
 
 /// Which feedback cues are currently enabled -- the Tauri-serializable
-/// shape `feedback_config_get`/`feedback_config_set` round-trip to the
-/// frontend, and `on_refine_start`/`on_refine_done` gate their cues on.
+/// shape `feedback_config_get`/`feedback_config_set` offer as a typed
+/// round-trip to the frontend, and `on_refine_start`/`on_refine_done` gate
+/// their cues on. The `feedback_*_enabled` settings keys (not this struct)
+/// are the actual source of truth: the shipped Behavior screen (C5) reads
+/// and writes them directly via the generic `settings_get`/`settings_set`
+/// commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedbackConfig {
     pub spinner: bool,
@@ -131,6 +135,11 @@ fn play_completion_sound() {
 
 /// Tauri command: reads the persisted feedback config. Registered by C17
 /// (`app/src-tauri/src/lib.rs`), which manages a `SettingsStore` as state.
+// orphan-ok: forward-facing typed frontend API for the feedback config.
+// Currently unused -- the shipped Behavior screen (C5) reads/writes the
+// same `feedback_*_enabled` settings keys directly via the generic
+// `settings_get`/`settings_set` commands, which is the single source of
+// truth today.
 #[tauri::command]
 pub fn feedback_config_get(
     state: tauri::State<'_, SettingsStore>,
@@ -140,6 +149,11 @@ pub fn feedback_config_get(
 
 /// Tauri command: persists the feedback config. Registered by C17
 /// (`app/src-tauri/src/lib.rs`), which manages a `SettingsStore` as state.
+// orphan-ok: forward-facing typed frontend API for the feedback config.
+// Currently unused -- the shipped Behavior screen (C5) reads/writes the
+// same `feedback_*_enabled` settings keys directly via the generic
+// `settings_get`/`settings_set` commands, which is the single source of
+// truth today.
 #[tauri::command]
 pub fn feedback_config_set(
     state: tauri::State<'_, SettingsStore>,

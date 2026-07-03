@@ -473,8 +473,14 @@ pub fn preset_import(
     state.import(&json).map_err(|e| e.to_string())
 }
 
-/// Tauri command: resolves a parsed `/trigger` to its effective preset, for
-/// the orchestrator's command pipeline (C17) to fold into the refine prompt.
+/// Tauri command: resolves a parsed `/trigger` to its effective preset.
+///
+/// Not the orchestrator's path: the command pipeline (C17) resolves
+/// `/trigger`s by calling [`PresetStore::resolve`] directly
+/// (`resolve_preset_trigger`), never this command. This is a frontend-facing
+/// helper -- e.g. for a future Capture-panel live preview of what a
+/// `/trigger` resolves to.
+// orphan-ok: frontend-facing helper, currently unused. See doc comment.
 #[tauri::command]
 pub fn preset_resolve(
     state: tauri::State<'_, PresetStore>,
