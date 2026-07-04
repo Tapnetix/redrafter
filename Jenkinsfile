@@ -34,10 +34,20 @@ pipeline {
                         }
                         stage('Linux: Build, Test & Package') {
                             steps {
-                                // Run as the host uid so workspace files stay jenkins-owned
-                                // (cleanable). The named volume persists the cargo registry
-                                // cache; target/ persists via the mounted workspace.
-                                sh 'docker run --rm -u $(id -u):$(id -g) -e HOME=$WORKSPACE -e CARGO_TERM_COLOR=always -e RUST_BACKTRACE=1 -v $WORKSPACE:$WORKSPACE -w $WORKSPACE -v redrafter-cargo:/opt/cargo --shm-size=2g redrafter-ci-linux:latest bash .ci/build-linux.sh'
+                                // Signing creds are only exposed for the duration of the
+                                // docker run (never echoed/interpolated — passed through as
+                                // `-e VAR` so docker reads the value from this step's env).
+                                // `tauri build` (inside build-linux.sh) requires them because
+                                // createUpdaterArtifacts:true fails the build without them.
+                                withCredentials([
+                                    string(credentialsId: 'tauri-signing-private-key', variable: 'TAURI_SIGNING_PRIVATE_KEY'),
+                                    string(credentialsId: 'tauri-signing-key-password', variable: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD')
+                                ]) {
+                                    // Run as the host uid so workspace files stay jenkins-owned
+                                    // (cleanable). The named volume persists the cargo registry
+                                    // cache; target/ persists via the mounted workspace.
+                                    sh 'docker run --rm -u $(id -u):$(id -g) -e HOME=$WORKSPACE -e CARGO_TERM_COLOR=always -e RUST_BACKTRACE=1 -e TAURI_SIGNING_PRIVATE_KEY -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD -v $WORKSPACE:$WORKSPACE -w $WORKSPACE -v redrafter-cargo:/opt/cargo --shm-size=2g redrafter-ci-linux:latest bash .ci/build-linux.sh'
+                                }
                                 // Verify bundles (host-side; files are in the mounted workspace).
                                 sh '''
                                     echo "=== Linux Artifact Verification ==="
@@ -50,6 +60,9 @@ pipeline {
                                     for appimage in target/release/bundle/appimage/*.AppImage; do
                                         [ -f "$appimage" ] && echo "AppImage: $(basename "$appimage") $(du -h "$appimage" | cut -f1)"
                                     done
+                                    for sig in target/release/bundle/appimage/*.AppImage.sig; do
+                                        [ -f "$sig" ] && echo "AppImage sig: $(basename "$sig")"
+                                    done
                                 '''
                             }
                             post {
@@ -59,10 +72,10 @@ pipeline {
                                     archiveArtifacts artifacts: 'coverage.json', allowEmptyArchive: true, fingerprint: true
                                 }
                                 success {
-                                    archiveArtifacts artifacts: 'target/release/bundle/**/*.deb, target/release/bundle/**/*.rpm, target/release/bundle/appimage/*.AppImage', allowEmptyArchive: true, fingerprint: true
+                                    archiveArtifacts artifacts: 'target/release/bundle/**/*.deb, target/release/bundle/**/*.rpm, target/release/bundle/appimage/*.AppImage, target/release/bundle/appimage/*.AppImage.sig', allowEmptyArchive: true, fingerprint: true
                                     // Stash for the GitHub Release stage (cross-agent, same run).
                                     stash name: 'bundles-linux',
-                                          includes: 'target/release/bundle/deb/*.deb, target/release/bundle/rpm/*.rpm, target/release/bundle/appimage/*.AppImage',
+                                          includes: 'target/release/bundle/deb/*.deb, target/release/bundle/rpm/*.rpm, target/release/bundle/appimage/*.AppImage, target/release/bundle/appimage/*.AppImage.sig',
                                           allowEmpty: true
                                 }
                             }
@@ -148,11 +161,16 @@ pipeline {
                         }
                         stage('macOS: Package') {
                             steps {
-                                dir('app') {
-                                    sh '''
-                                        echo "=== Building release bundles (dmg, app) ==="
-                                        pnpm tauri build 2>&1 | tail -20
-                                    '''
+                                withCredentials([
+                                    string(credentialsId: 'tauri-signing-private-key', variable: 'TAURI_SIGNING_PRIVATE_KEY'),
+                                    string(credentialsId: 'tauri-signing-key-password', variable: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD')
+                                ]) {
+                                    dir('app') {
+                                        sh '''
+                                            echo "=== Building release bundles (dmg, app) ==="
+                                            pnpm tauri build 2>&1 | tail -20
+                                        '''
+                                    }
                                 }
                                 // ── Code Signing + Notarization ───────────────────────────
                                 // Hardened-runtime Developer ID signing when
@@ -162,11 +180,12 @@ pipeline {
                                 // configured today, so this currently ad-hoc signs and skips
                                 // notarization — set the env vars to flip it on.
                                 //
-                                // NOTE: the updater's `plugins.updater.pubkey` in
-                                // app/src-tauri/tauri.conf.json is an empty placeholder — the
-                                // bundle will not be update-signed until the user generates a
-                                // real keypair and sets it. This is a documented release
-                                // blocker, not something this pipeline can fix.
+                                // NOTE: updater-artifact signing (the .app.tar.gz.sig) is
+                                // produced above by `tauri build` via the
+                                // tauri-signing-private-key / tauri-signing-key-password
+                                // Jenkins credentials — this codesign/notarization block is
+                                // orthogonal (Gatekeeper signing of the .app/.dmg, not the
+                                // updater's minisign signature).
                                 sh '''
                                     set -e
                                     APP_PATH=$(find target/release/bundle/macos -name "*.app" -type d | head -1)
@@ -242,9 +261,9 @@ pipeline {
                             }
                             post {
                                 success {
-                                    archiveArtifacts artifacts: 'target/release/bundle/**/*.dmg, target/release/bundle/macos/*.app.tar.gz', allowEmptyArchive: true, fingerprint: true
+                                    archiveArtifacts artifacts: 'target/release/bundle/**/*.dmg, target/release/bundle/macos/*.app.tar.gz, target/release/bundle/macos/*.app.tar.gz.sig', allowEmptyArchive: true, fingerprint: true
                                     stash name: 'bundles-macos',
-                                          includes: 'target/release/bundle/dmg/*.dmg',
+                                          includes: 'target/release/bundle/dmg/*.dmg, target/release/bundle/macos/*.app.tar.gz, target/release/bundle/macos/*.app.tar.gz.sig',
                                           allowEmpty: true
                                 }
                             }
@@ -273,26 +292,32 @@ pipeline {
                                 echo === Disk space ===
                                 fsutil volume diskfree C:
                             '''
-                            bat '''
-                                REM Halve the target footprint — debug info/incremental aren't needed for a release bundle.
-                                set CARGO_PROFILE_RELEASE_INCREMENTAL=false
+                            withCredentials([
+                                string(credentialsId: 'tauri-signing-private-key', variable: 'TAURI_SIGNING_PRIVATE_KEY'),
+                                string(credentialsId: 'tauri-signing-key-password', variable: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD')
+                            ]) {
+                                bat '''
+                                    REM Halve the target footprint — debug info/incremental aren't needed for a release bundle.
+                                    set CARGO_PROFILE_RELEASE_INCREMENTAL=false
 
-                                cd app
-                                call corepack enable pnpm
-                                call pnpm install --frozen-lockfile
-                                call pnpm tauri build --bundles nsis
+                                    cd app
+                                    call corepack enable pnpm
+                                    call pnpm install --frozen-lockfile
+                                    call pnpm tauri build --bundles nsis
 
-                                echo === Windows Artifact Verification ===
-                                cd ..
-                                for %%f in (target\\release\\bundle\\nsis\\*.exe) do echo NSIS: %%~nxf
-                            '''
+                                    echo === Windows Artifact Verification ===
+                                    cd ..
+                                    for %%f in (target\\release\\bundle\\nsis\\*.exe) do echo NSIS: %%~nxf
+                                    for %%f in (target\\release\\bundle\\nsis\\*.exe.sig) do echo NSIS sig: %%~nxf
+                                '''
+                            }
                         }
                     }
                     post {
                         success {
-                            archiveArtifacts artifacts: 'target/release/bundle/nsis/*.exe', allowEmptyArchive: true, fingerprint: true
+                            archiveArtifacts artifacts: 'target/release/bundle/nsis/*.exe, target/release/bundle/nsis/*.exe.sig', allowEmptyArchive: true, fingerprint: true
                             stash name: 'bundles-windows',
-                                  includes: 'target/release/bundle/nsis/*.exe',
+                                  includes: 'target/release/bundle/nsis/*.exe, target/release/bundle/nsis/*.exe.sig',
                                   allowEmpty: true
                         }
                         cleanup {
@@ -441,21 +466,84 @@ pipeline {
                         ['bundles-linux', 'bundles-macos', 'bundles-windows'].each { n ->
                             try { unstash n } catch (ignored) { echo "no stash: ${n} (platform build may have failed)" }
                         }
-                            withEnv(["RELEASE_TAG=${tag}"]) {
+                            withEnv(["RELEASE_TAG=${tag}", "RELEASE_VERSION=${ver}"]) {
                                 sh '''
                                     set -eux
                                     REPO="Tapnetix/redrafter"
                                     mkdir -p release-artifacts
                                     find target/release/bundle -type f \\
                                         \\( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \\
-                                           -o -name '*.dmg' -o -name '*.exe' \\) \\
+                                           -o -name '*.dmg' -o -name '*.exe' -o -name '*.app.tar.gz' \\
+                                           -o -name '*.sig' \\) \\
                                         -exec cp -v {} release-artifacts/ \\; || true
-                                    echo "=== release artifacts ==="; ls -lh release-artifacts/ || true
+                                    echo "=== release artifacts (bundles) ==="; ls -lh release-artifacts/ || true
 
                                     if [ -z "$(ls -A release-artifacts 2>/dev/null)" ]; then
                                         echo "No artifacts to upload — failing the release stage."
                                         exit 1
                                     fi
+
+                                    # ── Tauri updater manifest (latest.json) ───────────────────
+                                    # The desktop app's updater endpoint is
+                                    # .../releases/latest/download/latest.json, so latest.json
+                                    # MUST be published as a release asset alongside the signed
+                                    # bundles. Only emit a platform entry when that platform's
+                                    # .sig actually landed in release-artifacts/ — a platform
+                                    # build may have failed or been skipped (e.g. Windows runs
+                                    # under catchError -> UNSTABLE), and a broken/missing entry
+                                    # would break the updater for every platform, not just the
+                                    # missing one.
+                                    export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                                    python3 - "$RELEASE_TAG" "$RELEASE_VERSION" <<'PY'
+import glob
+import json
+import os
+import sys
+
+tag, version = sys.argv[1], sys.argv[2]
+repo = "Tapnetix/redrafter"
+base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+
+def entry(bundle_suffix):
+    sig_paths = glob.glob(os.path.join("release-artifacts", "*" + bundle_suffix + ".sig"))
+    if not sig_paths:
+        return None
+    sig_path = sig_paths[0]
+    bundle_name = os.path.basename(sig_path)[: -len(".sig")]
+    bundle_path = os.path.join("release-artifacts", bundle_name)
+    if not os.path.isfile(bundle_path):
+        return None
+    with open(sig_path) as f:
+        signature = f.read().strip()
+    return {"signature": signature, "url": f"{base_url}/{bundle_name}"}
+
+
+platforms = {}
+for key, bundle_suffix in (
+    ("darwin-aarch64", ".app.tar.gz"),
+    ("linux-x86_64", ".AppImage"),
+    ("windows-x86_64", "-setup.exe"),
+):
+    e = entry(bundle_suffix)
+    if e:
+        platforms[key] = e
+
+manifest = {
+    "version": version,
+    "notes": "See the release notes.",
+    "pub_date": os.environ["PUB_DATE"],
+    "platforms": platforms,
+}
+
+with open("release-artifacts/latest.json", "w") as f:
+    json.dump(manifest, f, indent=2)
+    f.write("\\n")
+
+print("latest.json platforms:", sorted(platforms.keys()))
+PY
+
+                                    echo "=== release artifacts (final, incl. latest.json) ==="; ls -lh release-artifacts/ || true
 
                                     if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
                                         echo "Release $RELEASE_TAG exists — uploading assets (clobber)."
