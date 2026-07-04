@@ -45,12 +45,13 @@
     ],
     "macOS": {
       "signingIdentity": "-"
-    }
+    },
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "autostart": {},
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3NDVBM0UzN0UzNjdDMEEKUldRS2ZEWis0Nk5GTjVjaWFyTzBKRi9lOFBQdzVJK0pSZ0ZaVUhGaC9lMEF4L2JxQ3VBQjlZTmQK",
       "endpoints": [
         "https://github.com/Tapnetix/redrafter/releases/latest/download/latest.json"
       ]
