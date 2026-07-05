@@ -4,10 +4,12 @@ pipeline {
     options {
         timestamps()
         // redrafter has no whisper-rs/OpenBLAS-class slow native compiles, but
-        // the Windows Rust build + packaging can still be the long pole; 60
-        // min covers a cold Windows build plus the sequential GitHub Release
-        // stage.
-        timeout(time: 60, unit: 'MINUTES')
+        // the Windows Rust build + packaging is the long pole and this timeout
+        // wraps every parallel branch, so it must clear a *cold* Windows agent
+        // (empty cargo cache) plus the sequential GitHub Release stage. 60 min
+        // was too tight — build #11 aborted at ~58 min mid-Windows-build — so
+        // bumped to 90 to leave headroom on a cold cache.
+        timeout(time: 90, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '5'))
     }
 
