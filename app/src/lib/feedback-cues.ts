@@ -29,7 +29,7 @@
 // double-fire.
 
 import { useEffect, useRef, useState } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen, type EventCallback, type UnlistenFn } from '@tauri-apps/api/event';
 
 /** Tauri event name emitted right before a refine runs (matches
  * `REFINE_FEEDBACK_START_EVENT` in `lib.rs`). */
@@ -78,33 +78,53 @@ export function useFeedbackCues(): FeedbackCueState {
       hudTimer.current = setTimeout(() => setHud(false), HUD_FLASH_MS);
     };
 
-    // The `.catch(() => {})` on each subscription is load-bearing: outside a
-    // Tauri runtime (unit tests, a non-Tauri browser context, or a boot race
-    // before `__TAURI_INTERNALS__` is injected) `listen()` rejects, and an
-    // unhandled rejection here fails the whole Vitest run (surfaced on the CI
-    // macOS agent). The cues simply no-op when the event system isn't present.
-    void listen<FeedbackCue[]>(REFINE_FEEDBACK_START_EVENT, (event) => {
-      const cues = event.payload ?? [];
-      if (cues.includes('spinner')) setSpinner(true);
-    })
-      .then((un) => {
-        if (disposed) un();
-        else unlistenStart = un;
-      })
-      .catch(() => {});
+    // Subscribing must never throw. Outside a Tauri runtime — unit tests, a
+    // non-Tauri browser context, or a boot race before `__TAURI_INTERNALS__`
+    // is injected — `listen()` may reject, return undefined, or (when a leaked
+    // test mock replaces it) return a non-thenable. Any of those would blow up
+    // App boot: an unhandled rejection OR a *synchronous* `undefined.then`
+    // TypeError, the latter a Vitest flake seen intermittently on the CI macOS
+    // agent. Guard the call itself, verify the result is thenable, and swallow
+    // rejections — the cues simply no-op when the event system isn't present.
+    const guardedListen = (
+      name: string,
+      handler: EventCallback<FeedbackCue[]>,
+      assign: (un: UnlistenFn) => void,
+    ) => {
+      let result: Promise<UnlistenFn> | undefined;
+      try {
+        result = listen<FeedbackCue[]>(name, handler);
+      } catch {
+        return;
+      }
+      if (!result || typeof result.then !== 'function') return;
+      result.then((un) => (disposed ? un() : assign(un))).catch(() => {});
+    };
 
-    void listen<FeedbackCue[]>(REFINE_FEEDBACK_DONE_EVENT, (event) => {
-      const cues = event.payload ?? [];
-      // The refine finished (success or failure): always clear the spinner.
-      setSpinner(false);
-      if (cues.includes('hud')) flashHud();
-      // 'sound' is played natively by the backend — nothing to do here.
-    })
-      .then((un) => {
-        if (disposed) un();
-        else unlistenDone = un;
-      })
-      .catch(() => {});
+    guardedListen(
+      REFINE_FEEDBACK_START_EVENT,
+      (event) => {
+        const cues = event.payload ?? [];
+        if (cues.includes('spinner')) setSpinner(true);
+      },
+      (un) => {
+        unlistenStart = un;
+      },
+    );
+
+    guardedListen(
+      REFINE_FEEDBACK_DONE_EVENT,
+      (event) => {
+        const cues = event.payload ?? [];
+        // The refine finished (success or failure): always clear the spinner.
+        setSpinner(false);
+        if (cues.includes('hud')) flashHud();
+        // 'sound' is played natively by the backend — nothing to do here.
+      },
+      (un) => {
+        unlistenDone = un;
+      },
+    );
 
     return () => {
       disposed = true;
