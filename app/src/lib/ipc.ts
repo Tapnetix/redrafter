@@ -15,13 +15,20 @@ export interface PermissionStatus {
 
 /** Reports whether the macOS Accessibility permission is currently granted. */
 export function getPermissionStatus(): Promise<PermissionStatus> {
-  return invoke('permission_status');
+  // `Promise.resolve` is a no-op in production (invoke already returns a
+  // promise) but guards the unit-test/non-Tauri path: a mock-reset `invoke`
+  // returns `undefined`, and calling `.then` on it in a mount effect would
+  // throw synchronously and crash the render. Wrapping routes that case into
+  // the caller's `.catch` instead. See feedback-cues for the same pattern.
+  return Promise.resolve(invoke<PermissionStatus>('permission_status'));
 }
 
 // ── Settings key-value store (A4) ──
 /** Reads a settings value by key, or `null` if it has never been set. */
 export function settingsGet(key: string): Promise<string | null> {
-  return invoke('settings_get', { key });
+  // Wrapped for the same reason as getPermissionStatus: called in mount
+  // effects, so a mock-reset `undefined` must not throw synchronously.
+  return Promise.resolve(invoke<string | null>('settings_get', { key }));
 }
 
 /** Upserts a settings value by key. */
@@ -85,7 +92,8 @@ export function connectionAdd(args: ConnectionAddArgs): Promise<Connection> {
 
 /** Lists every stored provider connection. Backed by `connection_list`. */
 export function connectionList(): Promise<Connection[]> {
-  return invoke<Connection[]>('connection_list');
+  // Wrapped for the same reason as getPermissionStatus (called during boot).
+  return Promise.resolve(invoke<Connection[]>('connection_list'));
 }
 
 export interface ConnectionEditArgs extends Record<string, unknown> {
