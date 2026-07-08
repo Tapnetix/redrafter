@@ -34,8 +34,11 @@ export default function Onboarding({ onContinue }: OnboardingProps) {
     checkStatus();
   }, [checkStatus]);
 
-  // Re-check automatically until granted (see wireframe copy: "redrafter
-  // re-checks automatically the moment you grant it — no restart needed").
+  // Re-check automatically until granted. macOS doesn't push a change event
+  // when Accessibility is toggled, so poll `permission_status` (which reads
+  // AXIsProcessTrusted) until it flips to granted. A manual "Re-check" button
+  // and troubleshooting (Applications-folder / remove-and-re-add) cover the
+  // cases where the OS keeps reporting false after the toggle.
   useEffect(() => {
     if (granted) {
       return;
@@ -116,7 +119,7 @@ export default function Onboarding({ onContinue }: OnboardingProps) {
                   redrafter needs this to read your selection and paste back.
                 </div>
               </div>
-              <div className="opt__ctrl">
+              <div className="opt__ctrl" style={{ display: 'flex', gap: 8 }}>
                 <button
                   className="btn btn--primary"
                   data-testid="perm-open-settings"
@@ -124,13 +127,45 @@ export default function Onboarding({ onContinue }: OnboardingProps) {
                 >
                   Open System Settings
                 </button>
+                <button
+                  className="btn btn--ghost"
+                  data-testid="perm-recheck"
+                  onClick={() => void checkStatus()}
+                >
+                  Re-check
+                </button>
               </div>
             </div>
           </div>
-          <p className="muted tiny" style={{ margin: '10px 0 0' }}>
-            redrafter re-checks automatically the moment you grant it — no
-            restart needed.
-          </p>
+          <ol className="muted tiny" style={{ margin: '10px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+            <li>Open System Settings → Privacy &amp; Security → Accessibility.</li>
+            <li>Turn <strong>redrafter</strong> on.</li>
+            <li>
+              Come back here — redrafter re-checks every second, or press{' '}
+              <strong>Re-check</strong>.
+            </li>
+          </ol>
+
+          <details data-testid="perm-troubleshoot" style={{ marginTop: 12 }}>
+            <summary className="muted tiny" style={{ cursor: 'pointer' }}>
+              Turned it on but it still says “Not granted”?
+            </summary>
+            <p className="muted tiny" style={{ margin: '8px 0 0', lineHeight: 1.6 }}>
+              macOS ties the permission to the app’s exact location, so:
+            </p>
+            <ul className="muted tiny" style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+              <li>
+                Make sure redrafter is in your <strong>Applications</strong> folder —
+                running it straight from the download or the disk image makes macOS
+                launch it from a temporary path each time, so the permission never
+                sticks. Move it to Applications, then reopen it.
+              </li>
+              <li>
+                Still stuck? In the Accessibility list, select redrafter, press the{' '}
+                <strong>–</strong> button to remove it, then add it back and turn it on.
+              </li>
+            </ul>
+          </details>
         </section>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 24 }}>

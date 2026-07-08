@@ -12,6 +12,16 @@ body {
   font-family: var(--font-body);
 }
 
+/* The onboarding / first-run screens (`.setup`) can be taller than the
+   compact app window. The wireframe centres the card with `place-items:
+   center` and no scroll, so on a short window the top of the card is clipped
+   and unreachable. Align to the top and allow vertical scroll so every
+   element is always reachable regardless of window height. */
+.setup {
+  place-items: start center;
+  overflow-y: auto;
+}
+
 /* Global refine feedback cues (SC13): the in-flight spinner and completion
    HUD flash, driven by `FeedbackCues` / `useFeedbackCues`. Fixed to the
    bottom-right of the app window so they overlay the current surface. */
