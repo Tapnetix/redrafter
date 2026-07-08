@@ -22,11 +22,22 @@ export interface OnboardingProps {
 
 export default function Onboarding({ onContinue }: OnboardingProps) {
   const [granted, setGranted] = useState(false);
+  // `checking` drives the Re-check button's feedback; `checkedNotGranted` shows
+  // an explicit "still not granted" note so a manual re-check that finds no
+  // change isn't silent (the previous button gave no indication at all).
+  const [checking, setChecking] = useState(false);
+  const [checkedNotGranted, setCheckedNotGranted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const checkStatus = useCallback(async () => {
-    const status = await invoke<PermissionStatus>('permission_status');
-    setGranted(status.granted);
+  const checkStatus = useCallback(async (manual = false) => {
+    if (manual) setChecking(true);
+    try {
+      const status = await invoke<PermissionStatus>('permission_status');
+      setGranted(status.granted);
+      if (manual) setCheckedNotGranted(!status.granted);
+    } finally {
+      if (manual) setChecking(false);
+    }
   }, []);
 
   // Initial check on mount.
@@ -130,13 +141,24 @@ export default function Onboarding({ onContinue }: OnboardingProps) {
                 <button
                   className="btn btn--ghost"
                   data-testid="perm-recheck"
-                  onClick={() => void checkStatus()}
+                  onClick={() => void checkStatus(true)}
+                  disabled={checking}
                 >
-                  Re-check
+                  {checking ? 'Checking…' : 'Re-check'}
                 </button>
               </div>
             </div>
           </div>
+          {checkedNotGranted && !granted && (
+            <p
+              className="tiny"
+              data-testid="perm-recheck-result"
+              role="status"
+              style={{ margin: '8px 0 0', color: 'var(--danger, #d0433b)' }}
+            >
+              Checked — macOS still reports it as not granted. See the steps below.
+            </p>
+          )}
           <ol className="muted tiny" style={{ margin: '10px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
             <li>Open System Settings → Privacy &amp; Security → Accessibility.</li>
             <li>Turn <strong>redrafter</strong> on.</li>
