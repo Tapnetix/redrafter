@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import App from './App';
@@ -7,11 +7,21 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
-// App now mounts the global `FeedbackCues` overlay, which subscribes to the
-// refine feedback-cue events on mount — stub the event API so these boot-flow
-// tests don't reach into the (absent) Tauri event internals.
+// App mounts the global `FeedbackCues` overlay and a `tray:navigate` listener,
+// both of which subscribe to Tauri events on mount — stub the event API so the
+// boot-flow tests don't reach into the (absent) Tauri event internals, and
+// capture each subscription's callback by event name so a test can simulate an
+// emit (used to drive the tray-navigation test below).
+const { trayHandlers } = vi.hoisted(() => ({
+  trayHandlers: {} as Record<string, (event: { payload: unknown }) => void>,
+}));
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(() => Promise.resolve(() => {})),
+  listen: vi.fn((name: string, cb: (event: { payload: unknown }) => void) => {
+    trayHandlers[name] = cb;
+    return Promise.resolve(() => {
+      delete trayHandlers[name];
+    });
+  }),
 }));
 
 const mockedInvoke = vi.mocked(invoke);
@@ -44,6 +54,8 @@ function mockBackend({
       case 'settings_set':
       case 'permission_open_settings':
         return Promise.resolve(null);
+      case 'history_list':
+        return Promise.resolve([]);
       default:
         return Promise.resolve(null);
     }
@@ -85,6 +97,23 @@ describe('App', () => {
     expect(screen.getByTestId('sidebar')).toBeInTheDocument();
     // General is the default section.
     expect(screen.getByTestId('general-permission')).toBeInTheDocument();
+  });
+
+  it('navigates to the section the tray emits via tray:navigate', async () => {
+    // Regression: the tray's Settings/Manage models/History items show this
+    // window and emit `tray:navigate` — App must switch to that section.
+    // Previously those tray items were no-ops and the UI was unreachable.
+    mockBackend({ granted: true });
+    render(<App />);
+    await screen.findByTestId('icon-rail');
+    expect(screen.getByTestId('general-permission')).toBeInTheDocument();
+
+    expect(trayHandlers['tray:navigate']).toBeDefined();
+    await act(async () => {
+      trayHandlers['tray:navigate']({ payload: 'history' });
+    });
+
+    expect(await screen.findByTestId('history-screen')).toBeInTheDocument();
   });
 
   it('switches sections via the nav rail', async () => {

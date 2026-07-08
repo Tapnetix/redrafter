@@ -16,7 +16,7 @@
 
 use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
-    Manager, Runtime,
+    Emitter, Manager, Runtime,
 };
 
 use crate::connections::ConnectionStore;
@@ -264,11 +264,15 @@ enum MenuAction {
     CheckUpdates,
     ToggleLaunchLogin,
     Quit,
-    /// A non-actionable id ("manage-models"/"settings"/"history", or an
-    /// unknown one): no native-window routing target exists yet (the app
-    /// shell's section switcher lives entirely in the frontend, `App.tsx`),
-    /// so these are best-effort no-ops, matching this task's "Linux
-    /// best-effort" carve-out.
+    /// Show + focus the (normally hidden, `visible: false`) main window and
+    /// switch the frontend's section switcher to `section` — the routing
+    /// target for the "Settings…"/"Manage models…"/"History…" items. Without
+    /// this the whole settings/models/history UI is unreachable (the window
+    /// is never otherwise shown). `section` is a frontend `Section` id
+    /// ("general"/"models"/"history"); `handle_menu_event` shows the window
+    /// and emits `tray:navigate` with it for `App.tsx` to consume.
+    ShowSection(&'static str),
+    /// An unknown id: no-op.
     Ignore,
 }
 
@@ -288,7 +292,32 @@ fn menu_action_for(id: &str) -> MenuAction {
         "check-updates" => MenuAction::CheckUpdates,
         "launch-login" => MenuAction::ToggleLaunchLogin,
         "quit" => MenuAction::Quit,
+        // The window-opening items: map each to the frontend section the
+        // shown window should land on (see `App.tsx`'s section switcher).
+        "settings" => MenuAction::ShowSection("general"),
+        "manage-models" => MenuAction::ShowSection("models"),
+        "history" => MenuAction::ShowSection("history"),
         _ => MenuAction::Ignore,
+    }
+}
+
+/// Shows and focuses the main window (created `visible: false`) and tells the
+/// frontend which section to display via a `tray:navigate` event. This is the
+/// only path that reveals the settings/models/history UI — the window is
+/// never otherwise shown.
+fn show_section<R: Runtime>(app: &tauri::AppHandle<R>, section: &str) {
+    match app.get_webview_window("main") {
+        Some(window) => {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+            // Emit after show so App.tsx (already mounted — the webview loads
+            // even while the window is hidden) switches to the section.
+            if let Err(e) = window.emit("tray:navigate", section) {
+                eprintln!("[tray] failed to emit tray:navigate({section}): {e}");
+            }
+        }
+        None => eprintln!("[tray] main window not found; cannot show section {section}"),
     }
 }
 
@@ -346,6 +375,7 @@ fn handle_menu_event<R: Runtime>(app: &tauri::AppHandle<R>, id: &str) {
             }
             refresh_tray(app);
         }
+        MenuAction::ShowSection(section) => show_section(app, section),
         MenuAction::Quit => app.exit(0),
         MenuAction::Ignore => {}
     }
@@ -780,10 +810,26 @@ mod tests {
     }
 
     #[test]
-    fn menu_action_for_routes_a_non_actionable_id_to_ignore() {
-        assert_eq!(menu_action_for("manage-models"), MenuAction::Ignore);
-        assert_eq!(menu_action_for("settings"), MenuAction::Ignore);
-        assert_eq!(menu_action_for("history"), MenuAction::Ignore);
+    fn menu_action_for_routes_the_window_opening_items_to_show_section() {
+        // Regression: these were previously `Ignore` (no-ops), which made the
+        // entire settings/models/history UI unreachable from the tray — the
+        // only way to reveal the `visible: false` main window.
+        assert_eq!(
+            menu_action_for("settings"),
+            MenuAction::ShowSection("general")
+        );
+        assert_eq!(
+            menu_action_for("manage-models"),
+            MenuAction::ShowSection("models")
+        );
+        assert_eq!(
+            menu_action_for("history"),
+            MenuAction::ShowSection("history")
+        );
+    }
+
+    #[test]
+    fn menu_action_for_routes_an_unknown_id_to_ignore() {
         assert_eq!(menu_action_for("something-else"), MenuAction::Ignore);
     }
 

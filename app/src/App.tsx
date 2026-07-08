@@ -26,6 +26,7 @@
 // rather than only the Phase A first-enabled-connection heuristic.
 
 import { useCallback, useEffect, useState, type ComponentType } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import NavRail from '@/components/NavRail';
 import Sidebar from '@/components/Sidebar';
 import FeedbackCues from '@/components/FeedbackCues';
@@ -115,6 +116,37 @@ export default function App() {
     },
     [modelStore],
   );
+
+  // The tray's Settings / Manage models / History items show + focus this
+  // (normally hidden) window and emit `tray:navigate` with the target section
+  // id — switch to it. Without this listener those items do nothing and the
+  // settings UI is unreachable. Guarded like `useFeedbackCues`: outside a
+  // Tauri runtime `listen()` may reject / return a non-thenable, and an
+  // unhandled rejection or synchronous throw here would crash App boot.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const TRAY_SECTIONS: Record<string, Section> = {
+      general: 'general',
+      models: 'models',
+      history: 'history',
+    };
+    try {
+      const p = listen<string>('tray:navigate', (event) => {
+        const target = TRAY_SECTIONS[event.payload];
+        if (target) navigate(target);
+      });
+      if (p && typeof p.then === 'function') {
+        p.then((un) => (disposed ? un() : (unlisten = un))).catch(() => {});
+      }
+    } catch {
+      // no event system (unit tests / non-Tauri context) — nothing to do
+    }
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [navigate]);
 
   if (route === 'loading') {
     return <div data-testid="app-loading" aria-busy="true" />;

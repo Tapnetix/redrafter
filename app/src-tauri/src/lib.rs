@@ -919,6 +919,19 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Menu-bar app: closing the settings window must HIDE it, not destroy
+        // it. The window is created `visible: false` and is only ever revealed
+        // by the tray (tray::show_section); if a close destroyed it,
+        // `get_webview_window("main")` would return None and the tray's
+        // Settings/Models/History items would silently stop working.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
 
