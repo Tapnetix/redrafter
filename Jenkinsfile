@@ -264,12 +264,42 @@ pipeline {
 
                                                 # Tauri must not re-import into its own keychain (which
                                                 # would lack the intermediate) — make it use the identity
-                                                # we just installed.
+                                                # we just installed. Also unset the API-key vars so Tauri
+                                                # only SIGNS here; notarization is a separate, bounded,
+                                                # best-effort step below. Accessibility needs the
+                                                # Developer ID *signature*, not notarization, and a slow
+                                                # Apple notarization (seen taking 1h+) must not gate the
+                                                # whole build.
                                                 unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
+                                                unset APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_PATH
 
-                                                echo "=== Building release bundles (Developer ID signed + notarized) ==="
+                                                echo "=== Building release bundles (Developer ID signed) ==="
                                                 cd app && pnpm tauri build 2>&1 | tail -40
                                             '''
+                                            // Notarize + staple the dmg — bounded and NON-FATAL.
+                                            // Accessibility is already fixed by the signature above;
+                                            // notarization only clears Gatekeeper's unidentified-
+                                            // developer warning, so a slow/failed run degrades the
+                                            // build to UNSTABLE rather than hanging or failing it.
+                                            // Streams live (no tail) so progress is visible.
+                                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                                                timeout(time: 25, unit: 'MINUTES') {
+                                                    sh '''
+                                                        set -eu
+                                                        DMG=$(find target/release/bundle/dmg -name "*.dmg" | head -1)
+                                                        if [ -z "$DMG" ]; then echo "No dmg found to notarize."; exit 0; fi
+                                                        echo "=== Notarizing $DMG (best-effort) ==="
+                                                        xcrun notarytool submit "$DMG" \
+                                                            --key-id "$APPLE_API_KEY" \
+                                                            --key "$APPLE_API_KEY_PATH" \
+                                                            --issuer "$APPLE_API_ISSUER" \
+                                                            --wait --timeout 20m
+                                                        echo "=== Stapling notarization ticket ==="
+                                                        xcrun stapler staple "$DMG"
+                                                        xcrun stapler validate "$DMG"
+                                                    '''
+                                                }
+                                            }
                                         }
                                     } else {
                                         echo 'Apple credentials NOT configured — falling back to ad-hoc signing. Gatekeeper will warn and macOS Accessibility will NOT work for this build.'
