@@ -163,23 +163,6 @@ pipeline {
                         }
                         stage('macOS: Package') {
                             steps {
-                                // macOS ships the Developer ID *root* but not necessarily the
-                                // G2 *intermediate*. Without it the Developer ID certificate
-                                // can't build a chain, `security find-identity -v` reports
-                                // "0 valid identities", and codesign fails with "no identity
-                                // found" — even though the cert + key are both present.
-                                // Install it into this agent's login keychain; idempotent and
-                                // non-fatal.
-                                sh '''
-                                    if security find-certificate -c "Developer ID Certification Authority" -a "$HOME/Library/Keychains/login.keychain-db" 2>/dev/null | grep -q alis; then
-                                        echo "Developer ID G2 intermediate: already present"
-                                    else
-                                        echo "=== Installing Apple Developer ID G2 intermediate ==="
-                                        curl -sS -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
-                                            && security import /tmp/DeveloperIDG2CA.cer -k "$HOME/Library/Keychains/login.keychain-db" 2>&1 | tail -1 \
-                                            || echo "(intermediate install skipped — signing may fail to validate the chain)"
-                                    fi
-                                '''
                                 // Developer ID signing + notarization happen INSIDE `tauri
                                 // build`: Tauri imports APPLE_CERTIFICATE into a temporary
                                 // keychain, signs the .app with APPLE_SIGNING_IDENTITY under
@@ -230,9 +213,63 @@ pipeline {
                                     if (haveApple) {
                                         echo 'Apple Developer ID credentials present — signing with hardened runtime + notarizing.'
                                         withCredentials(tauriCreds + appleCreds) {
-                                            dir('app') {
-                                                sh 'echo "=== Building release bundles (Developer ID signed + notarized) ===" && pnpm tauri build 2>&1 | tail -40'
-                                            }
+                                            // Build a dedicated keychain we fully control, rather
+                                            // than letting Tauri import APPLE_CERTIFICATE into one
+                                            // of its own. Two reasons that fails:
+                                            //   1. Chain — macOS ships the Developer ID *root* but
+                                            //      not the G2 *intermediate*, so a keychain holding
+                                            //      only the leaf dies with "unable to build chain
+                                            //      to self-signed root for signer".
+                                            //   2. Headless access — the imported key needs an
+                                            //      explicit partition list, else codesign fails
+                                            //      with errSecInternalComponent (it wants an
+                                            //      interactive "allow" click nobody can give).
+                                            // Note the jenkins user has NO login keychain at all
+                                            // (never had a GUI session), so there is no pre-existing
+                                            // keychain to put any of this in.
+                                            sh '''
+                                                set -eu
+                                                KEYCHAIN="$HOME/redrafter-signing.keychain-db"
+                                                KC_PASS=$(openssl rand -base64 24)
+                                                ORIG_KEYCHAINS=$(security list-keychains -d user | sed 's/[" ]//g')
+
+                                                cleanup() {
+                                                    security list-keychains -d user -s $ORIG_KEYCHAINS 2>/dev/null || true
+                                                    security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+                                                    rm -f /tmp/devid.p12 /tmp/DeveloperIDG2CA.cer
+                                                }
+                                                trap cleanup EXIT
+
+                                                echo "=== Preparing signing keychain ==="
+                                                security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+                                                security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+                                                security set-keychain-settings -lut 21600 "$KEYCHAIN"
+                                                security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+                                                security list-keychains -d user -s "$KEYCHAIN" $ORIG_KEYCHAINS
+
+                                                echo "=== Installing Apple Developer ID G2 intermediate (completes the chain) ==="
+                                                curl -sS -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+                                                security import /tmp/DeveloperIDG2CA.cer -k "$KEYCHAIN" -T /usr/bin/codesign
+
+                                                echo "=== Importing the Developer ID identity ==="
+                                                printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A > /tmp/devid.p12
+                                                security import /tmp/devid.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+                                                rm -f /tmp/devid.p12
+
+                                                # Required for headless codesign use of the key.
+                                                security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KEYCHAIN" >/dev/null
+
+                                                echo "=== Codesigning identities visible to the build ==="
+                                                security find-identity -v -p codesigning "$KEYCHAIN"
+
+                                                # Tauri must not re-import into its own keychain (which
+                                                # would lack the intermediate) — make it use the identity
+                                                # we just installed.
+                                                unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
+
+                                                echo "=== Building release bundles (Developer ID signed + notarized) ==="
+                                                cd app && pnpm tauri build 2>&1 | tail -40
+                                            '''
                                         }
                                     } else {
                                         echo 'Apple credentials NOT configured — falling back to ad-hoc signing. Gatekeeper will warn and macOS Accessibility will NOT work for this build.'
