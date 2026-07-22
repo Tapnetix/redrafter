@@ -183,13 +183,26 @@ pipeline {
                                         string(credentialsId: 'tauri-signing-private-key', variable: 'TAURI_SIGNING_PRIVATE_KEY'),
                                         string(credentialsId: 'tauri-signing-key-password', variable: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD'),
                                     ]
+                                    // Signing: the Developer ID cert (base64 .p12) + its export
+                                    // password + the identity string. Tauri imports the cert
+                                    // into a temporary keychain on this agent — nothing is
+                                    // installed into the agent's login keychain.
+                                    //
+                                    // Notarization: an App Store Connect *Team* API key rather
+                                    // than an Apple ID + app-specific password. The key belongs
+                                    // to the team (not a personal Apple ID), is reusable across
+                                    // every app in the team, and is revocable — which also
+                                    // sidesteps the developer account and the Mac's account
+                                    // being different Apple IDs. Note Tauri's APPLE_API_KEY is
+                                    // the *Key ID*; the .p8 itself is APPLE_API_KEY_PATH, bound
+                                    // from a Jenkins Secret file.
                                     def appleCreds = [
                                         string(credentialsId: 'apple-certificate', variable: 'APPLE_CERTIFICATE'),
                                         string(credentialsId: 'apple-certificate-password', variable: 'APPLE_CERTIFICATE_PASSWORD'),
                                         string(credentialsId: 'apple-signing-identity', variable: 'APPLE_SIGNING_IDENTITY'),
-                                        string(credentialsId: 'apple-id', variable: 'APPLE_ID'),
-                                        string(credentialsId: 'apple-password', variable: 'APPLE_PASSWORD'),
-                                        string(credentialsId: 'apple-team-id', variable: 'APPLE_TEAM_ID'),
+                                        string(credentialsId: 'apple-api-issuer', variable: 'APPLE_API_ISSUER'),
+                                        string(credentialsId: 'apple-api-key-id', variable: 'APPLE_API_KEY'),
+                                        file(credentialsId: 'apple-api-key-p8', variable: 'APPLE_API_KEY_PATH'),
                                     ]
                                     boolean haveApple = true
                                     try {
