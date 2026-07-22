@@ -163,6 +163,23 @@ pipeline {
                         }
                         stage('macOS: Package') {
                             steps {
+                                // macOS ships the Developer ID *root* but not necessarily the
+                                // G2 *intermediate*. Without it the Developer ID certificate
+                                // can't build a chain, `security find-identity -v` reports
+                                // "0 valid identities", and codesign fails with "no identity
+                                // found" — even though the cert + key are both present.
+                                // Install it into this agent's login keychain; idempotent and
+                                // non-fatal.
+                                sh '''
+                                    if security find-certificate -c "Developer ID Certification Authority" -a "$HOME/Library/Keychains/login.keychain-db" 2>/dev/null | grep -q alis; then
+                                        echo "Developer ID G2 intermediate: already present"
+                                    else
+                                        echo "=== Installing Apple Developer ID G2 intermediate ==="
+                                        curl -sS -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+                                            && security import /tmp/DeveloperIDG2CA.cer -k "$HOME/Library/Keychains/login.keychain-db" 2>&1 | tail -1 \
+                                            || echo "(intermediate install skipped — signing may fail to validate the chain)"
+                                    fi
+                                '''
                                 // Developer ID signing + notarization happen INSIDE `tauri
                                 // build`: Tauri imports APPLE_CERTIFICATE into a temporary
                                 // keychain, signs the .app with APPLE_SIGNING_IDENTITY under
