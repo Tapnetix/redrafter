@@ -163,15 +163,57 @@ pipeline {
                         }
                         stage('macOS: Package') {
                             steps {
-                                withCredentials([
-                                    string(credentialsId: 'tauri-signing-private-key', variable: 'TAURI_SIGNING_PRIVATE_KEY'),
-                                    string(credentialsId: 'tauri-signing-key-password', variable: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD')
-                                ]) {
-                                    dir('app') {
-                                        sh '''
-                                            echo "=== Building release bundles (dmg, app) ==="
-                                            pnpm tauri build 2>&1 | tail -20
-                                        '''
+                                // Developer ID signing + notarization happen INSIDE `tauri
+                                // build`: Tauri imports APPLE_CERTIFICATE into a temporary
+                                // keychain, signs the .app with APPLE_SIGNING_IDENTITY under
+                                // the hardened runtime, builds the .dmg around that
+                                // already-signed .app, then notarizes + staples via the App
+                                // Store Connect credentials. Signing HERE (rather than
+                                // re-signing the .app afterwards) is what keeps the copy
+                                // *inside* the .dmg correctly signed — a post-bundle re-sign
+                                // leaves the dmg's embedded copy stale.
+                                //
+                                // Why the real identity matters: macOS 15+/26 only honours the
+                                // Accessibility permission for apps signed with a genuine
+                                // Developer ID (TeamIdentifier set). An ad-hoc signature is
+                                // *valid* but Team-ID-less, so the user can flip the toggle and
+                                // AXIsProcessTrusted() still returns false.
+                                script {
+                                    def tauriCreds = [
+                                        string(credentialsId: 'tauri-signing-private-key', variable: 'TAURI_SIGNING_PRIVATE_KEY'),
+                                        string(credentialsId: 'tauri-signing-key-password', variable: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD'),
+                                    ]
+                                    def appleCreds = [
+                                        string(credentialsId: 'apple-certificate', variable: 'APPLE_CERTIFICATE'),
+                                        string(credentialsId: 'apple-certificate-password', variable: 'APPLE_CERTIFICATE_PASSWORD'),
+                                        string(credentialsId: 'apple-signing-identity', variable: 'APPLE_SIGNING_IDENTITY'),
+                                        string(credentialsId: 'apple-id', variable: 'APPLE_ID'),
+                                        string(credentialsId: 'apple-password', variable: 'APPLE_PASSWORD'),
+                                        string(credentialsId: 'apple-team-id', variable: 'APPLE_TEAM_ID'),
+                                    ]
+                                    boolean haveApple = true
+                                    try {
+                                        withCredentials(appleCreds) { }
+                                    } catch (ignored) {
+                                        haveApple = false
+                                    }
+                                    if (haveApple) {
+                                        echo 'Apple Developer ID credentials present — signing with hardened runtime + notarizing.'
+                                        withCredentials(tauriCreds + appleCreds) {
+                                            dir('app') {
+                                                sh 'echo "=== Building release bundles (Developer ID signed + notarized) ===" && pnpm tauri build 2>&1 | tail -40'
+                                            }
+                                        }
+                                    } else {
+                                        echo 'Apple credentials NOT configured — falling back to ad-hoc signing. Gatekeeper will warn and macOS Accessibility will NOT work for this build.'
+                                        withCredentials(tauriCreds) {
+                                            // Ad-hoc: `-` is what tauri.conf.json used to hardcode.
+                                            withEnv(['APPLE_SIGNING_IDENTITY=-']) {
+                                                dir('app') {
+                                                    sh 'echo "=== Building release bundles (ad-hoc signed) ===" && pnpm tauri build 2>&1 | tail -40'
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 // ── Code Signing + Notarization ───────────────────────────
@@ -192,47 +234,26 @@ pipeline {
                                     set -e
                                     APP_PATH=$(find target/release/bundle/macos -name "*.app" -type d | head -1)
                                     if [ -n "$APP_PATH" ]; then
-                                        if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
-                                            echo "=== Signing with Developer ID: $APPLE_SIGNING_IDENTITY ==="
-                                            codesign --force --deep --options runtime \
-                                                --sign "$APPLE_SIGNING_IDENTITY" \
-                                                --entitlements app/src-tauri/entitlements.plist \
-                                                "$APP_PATH"
-                                        else
-                                            echo "=== Ad-hoc signing (no APPLE_SIGNING_IDENTITY set) ==="
-                                            codesign --force --deep --sign - "$APP_PATH"
+                                        # Verify only — the .app was already signed by `tauri
+                                        # build` above. Re-signing here would invalidate the
+                                        # copy already embedded in the .dmg.
+                                        echo "=== Verifying .app signature ==="
+                                        codesign --verify --deep --strict "$APP_PATH" && echo "Signature: OK" || { echo "Signature: INVALID"; exit 1; }
+                                        codesign -dvv "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier" || true
+                                        if codesign -dvv "$APP_PATH" 2>&1 | grep -q "TeamIdentifier=not set"; then
+                                            echo "WARNING: TeamIdentifier not set (ad-hoc build) — Gatekeeper will warn and macOS Accessibility will NOT work for this bundle."
                                         fi
-                                        echo "=== Verifying signature ==="
-                                        codesign --verify --deep --strict "$APP_PATH" && echo "Signature: OK" || echo "Signature: INVALID"
-                                        codesign -dvv "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Signature" || true
                                     fi
 
                                     DMG_PATH=$(find target/release/bundle/dmg -name "*.dmg" | head -1)
-                                    if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$DMG_PATH" ]; then
-                                        echo "=== Re-creating DMG with signed .app ==="
-                                        DMG_NAME=$(basename "$DMG_PATH")
-                                        DMG_DIR=$(dirname "$DMG_PATH")
-                                        MOUNT_DIR=$(mktemp -d)
-                                        hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_DIR" -quiet
-                                        NEW_DMG="${DMG_DIR}/${DMG_NAME%.dmg}-signed.dmg"
-                                        hdiutil create -volname "redrafter" -srcfolder "$MOUNT_DIR" -ov -format UDZO "$NEW_DMG"
-                                        hdiutil detach "$MOUNT_DIR" -quiet
-                                        mv "$NEW_DMG" "$DMG_PATH"
-
-                                        echo "=== Submitting for notarization ==="
-                                        xcrun notarytool submit "$DMG_PATH" \
-                                            --apple-id "$APPLE_ID" \
-                                            --password "$APPLE_PASSWORD" \
-                                            --team-id "$APPLE_TEAM_ID" \
-                                            --wait --timeout 10m
-
-                                        echo "=== Stapling notarization ticket ==="
-                                        xcrun stapler staple "$DMG_PATH"
-
-                                        echo "=== Verifying notarization ==="
-                                        spctl --assess --type open --context context:primary-signature "$DMG_PATH" 2>&1 && echo "Notarization: OK" || echo "Notarization: check failed"
-                                    else
-                                        echo "=== Skipping notarization (set APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID to enable) ==="
+                                    if [ -n "$DMG_PATH" ]; then
+                                        # `tauri build` notarizes + staples the bundle when the
+                                        # App Store Connect credentials are present, so report
+                                        # the outcome rather than re-submitting (re-creating the
+                                        # dmg here is what used to strip the signature).
+                                        echo "=== Notarization status ==="
+                                        xcrun stapler validate "$DMG_PATH" 2>&1 | tail -2 || echo "(no stapled ticket — expected for an ad-hoc build)"
+                                        spctl --assess --type open --context context:primary-signature "$DMG_PATH" 2>&1 | tail -2 || true
                                     fi
 
                                     echo "=== macOS Artifact Verification ==="
@@ -241,10 +262,12 @@ pipeline {
                                     done
 
                                     # Regression guard: the .app INSIDE the dmg must carry a
-                                    # valid signature. Tauri ad-hoc signs during bundling
-                                    # (bundle.macOS.signingIdentity = "-") so the dmg copy is
-                                    # signed; without it macOS refuses to open the app
-                                    # ("damaged") on Apple Silicon. Fail loudly if it regresses.
+                                    # valid signature. Tauri signs during bundling using
+                                    # $APPLE_SIGNING_IDENTITY (a real Developer ID when the
+                                    # Apple credentials are configured, else "-" for ad-hoc),
+                                    # so the dmg's embedded copy is signed; without it macOS
+                                    # refuses to open the app ("damaged") on Apple Silicon.
+                                    # Fail loudly if it regresses.
                                     if [ -n "$DMG_PATH" ]; then
                                         MNT=$(mktemp -d)
                                         hdiutil attach "$DMG_PATH" -mountpoint "$MNT" -nobrowse -quiet
