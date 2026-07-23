@@ -382,7 +382,12 @@ pipeline {
                                 '''
                             }
                             post {
-                                success {
+                                // `always`, not `success`: signing produces the release
+                                // artifacts, but a slow/failed *notarization* degrades this
+                                // stage to UNSTABLE (best-effort, see above). The signed dmg
+                                // must still be archived + stashed in that case, else an
+                                // UNSTABLE build silently drops the macOS bundle.
+                                always {
                                     archiveArtifacts artifacts: 'target/release/bundle/**/*.dmg, target/release/bundle/macos/*.app.tar.gz, target/release/bundle/macos/*.app.tar.gz.sig', allowEmptyArchive: true, fingerprint: true
                                     stash name: 'bundles-macos',
                                           includes: 'target/release/bundle/dmg/*.dmg, target/release/bundle/macos/*.app.tar.gz, target/release/bundle/macos/*.app.tar.gz.sig',
