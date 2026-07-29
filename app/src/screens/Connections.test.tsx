@@ -13,6 +13,7 @@ vi.mock('@/lib/ipc', () => ({
   connectionRefreshModels: vi.fn(),
   modelAddManual: vi.fn(),
   secretsSet: vi.fn(),
+  openExternal: vi.fn(),
 }));
 
 const mockedIpc = vi.mocked(ipc);
@@ -35,6 +36,7 @@ describe('Connections', () => {
     mockedIpc.connectionList.mockResolvedValue([]);
     mockedIpc.connectionTest.mockResolvedValue(undefined);
     mockedIpc.secretsSet.mockResolvedValue(undefined);
+    mockedIpc.openExternal.mockResolvedValue(undefined);
   });
 
   it('shows the empty state with no connections and opens the add sheet from its CTA', async () => {
@@ -132,6 +134,97 @@ describe('Connections', () => {
 
     await waitFor(() => expect(mockedIpc.modelAddManual).toHaveBeenCalledWith('1', 'my-model'));
     await screen.findByTestId('conn-model-check-my-model');
+  });
+
+  // ── Regressions from real-app testing: every one of these controls ran a
+  // command successfully and rendered nothing, so the user read them as dead.
+
+  it('routes the "Get an API key" link through open_external instead of an inert href', async () => {
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.click(screen.getByTestId('conn-get-key-link'));
+
+    await waitFor(() =>
+      expect(mockedIpc.openExternal).toHaveBeenCalledWith('https://console.anthropic.com/settings/keys'),
+    );
+  });
+
+  it('reports a reachable result on the row Test button, not just failures', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+
+    fireEvent.click(screen.getByTestId('connection-test-anthropic'));
+
+    expect(await screen.findByTestId('connection-test-ok-anthropic')).toBeInTheDocument();
+  });
+
+  it('surfaces a failed row Test with its message', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    mockedIpc.connectionTest.mockRejectedValue(new Error('could not connect to anthropic'));
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+
+    fireEvent.click(screen.getByTestId('connection-test-anthropic'));
+
+    expect(await screen.findByTestId('connection-error-anthropic')).toHaveTextContent(
+      'could not connect to anthropic',
+    );
+  });
+
+  it('closes the edit sheet after a successful Save changes', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    mockedIpc.connectionEdit.mockResolvedValue(anthropicConnection({ baseUrl: 'https://proxy.example' }));
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+
+    fireEvent.click(screen.getByTestId('connection-save'));
+
+    await waitFor(() => expect(screen.queryByTestId('connection-modal')).not.toBeInTheDocument());
+  });
+
+  it('keeps the sheet open and explains why when Save changes fails', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    mockedIpc.connectionEdit.mockRejectedValue(new Error('no connection with id 1'));
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+
+    fireEvent.click(screen.getByTestId('connection-save'));
+
+    expect(await screen.findByTestId('conn-sheet-error')).toHaveTextContent('no connection with id 1');
+    expect(screen.getByTestId('connection-modal')).toBeInTheDocument();
+  });
+
+  it('explains why a model checkbox did not take when connection_edit rejects', async () => {
+    mockedIpc.connectionList.mockResolvedValue([
+      anthropicConnection({ availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'] }),
+    ]);
+    mockedIpc.connectionEdit.mockRejectedValue(new Error('database is locked'));
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+    fireEvent.click(screen.getByTestId('connection-edit-anthropic'));
+
+    fireEvent.click(screen.getByTestId('conn-model-check-claude-sonnet-4-6'));
+
+    expect(await screen.findByTestId('conn-sheet-error')).toHaveTextContent('database is locked');
+  });
+
+  it('reports what Refresh models discovered', async () => {
+    mockedIpc.connectionList.mockResolvedValue([anthropicConnection()]);
+    mockedIpc.connectionRefreshModels.mockResolvedValue({
+      status: 'discovered',
+      connection: anthropicConnection({ availableModels: ['claude-opus-4-6', 'claude-sonnet-4-6'] }),
+    });
+    render(<Connections />);
+    await screen.findByTestId('connection-row-anthropic');
+
+    fireEvent.click(screen.getByTestId('connection-refresh-anthropic'));
+
+    expect(await screen.findByTestId('connection-refreshed-anthropic')).toHaveTextContent('2 models found');
   });
 
   it('toggling a discovered model checkbox calls connection_edit with the updated curation', async () => {

@@ -32,9 +32,18 @@ describe('screens-index registry', () => {
     expect(Object.keys(SECTION_TITLES).sort()).toEqual(SCREENS.map((s) => s.id).sort());
   });
 
-  it('only Connections and Models carry a cross-link props factory', () => {
+  it('General, Connections and Models carry a cross-link props factory', () => {
+    // General joined the list when its "Active model" summary became a real
+    // link to the Models screen (it used to be an inert button).
     const withProps = SCREENS.filter((s) => s.props).map((s) => s.id);
-    expect(withProps.sort()).toEqual(['connections', 'models']);
+    expect(withProps.sort()).toEqual(['connections', 'general', 'models']);
+  });
+
+  it("General's props factory cross-links to the models section", () => {
+    const navigate = vi.fn();
+    const props = screenById('general').props!(navigate) as { onNavigateToModels: () => void };
+    props.onNavigateToModels();
+    expect(navigate).toHaveBeenCalledWith('models');
   });
 
   it("Connections' props factory cross-links to the models section", () => {

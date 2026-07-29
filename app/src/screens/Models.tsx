@@ -52,6 +52,9 @@ export default function Models({ onNavigateToConnections }: ModelsProps) {
   const [pullModelId, setPullModelId] = useState('');
   const [pullState, setPullState] = useState<PullState>('idle');
   const [pullMessage, setPullMessage] = useState('');
+  // `setActive`/`disable`/`toggleFavorite` used to run bare, so a rejected
+  // command left the row untouched with nothing to explain why.
+  const [actionError, setActionError] = useState('');
 
   const load = () => {
     modelsList()
@@ -63,19 +66,33 @@ export default function Models({ onNavigateToConnections }: ModelsProps) {
     load();
   }, []);
 
+  /** Runs one curation command, adopting its returned list or reporting why
+   * it failed — never leaving the click with no observable outcome. */
+  async function runAction(what: string, call: () => Promise<ModelsListResult>) {
+    setActionError('');
+    try {
+      setResult(await call());
+    } catch (err) {
+      setActionError(`Could not ${what}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   async function setActive(model: CuratedModel) {
-    const updated = await modelSetActive({ connectionId: model.connectionId, modelId: model.modelId });
-    setResult(updated);
+    await runAction(`set ${model.modelId} as the active model`, () =>
+      modelSetActive({ connectionId: model.connectionId, modelId: model.modelId }),
+    );
   }
 
   async function disable(model: CuratedModel) {
-    const updated = await modelDisable({ connectionId: model.connectionId, modelId: model.modelId });
-    setResult(updated);
+    await runAction(`disable ${model.modelId}`, () =>
+      modelDisable({ connectionId: model.connectionId, modelId: model.modelId }),
+    );
   }
 
   async function toggleFavorite(model: CuratedModel) {
-    const updated = await modelToggleFavorite({ connectionId: model.connectionId, modelId: model.modelId });
-    setResult(updated);
+    await runAction(`update the favorite for ${model.modelId}`, () =>
+      modelToggleFavorite({ connectionId: model.connectionId, modelId: model.modelId }),
+    );
   }
 
   async function runPull() {
@@ -152,6 +169,16 @@ export default function Models({ onNavigateToConnections }: ModelsProps) {
               </button>
               . Set one as the global <strong>active</strong> model; ⭐ favorites float to the top of the menu-bar tray.
             </p>
+            {actionError && (
+              <p
+                className="tiny"
+                role="alert"
+                data-testid="models-action-error"
+                style={{ margin: '0 0 8px', color: 'var(--danger, #d0433b)' }}
+              >
+                {actionError}
+              </p>
+            )}
             <div className="grp" data-testid="models-table">
               <table className="mtable" role="radiogroup" aria-label="Active model" data-testid="active-model">
                 <thead>
@@ -182,6 +209,13 @@ export default function Models({ onNavigateToConnections }: ModelsProps) {
                       <td className="mono">{model.modelId}</td>
                       <td>{model.providerKind}</td>
                       <td>
+                        {/* An explicit word, not just the radio dot: which row
+                            is active has to be readable at a glance. */}
+                        {model.active && (
+                          <span className="chip ok" data-testid={`model-active-chip-${model.modelId}`}>
+                            active
+                          </span>
+                        )}
                         <span className="run-state">{model.providerKind === 'ollama' ? 'local' : 'cloud'}</span>
                       </td>
                       <td>

@@ -21,6 +21,7 @@
 //     still out of scope here.
 import { useEffect, useRef, useState } from 'react';
 import { getPermissionStatus, hotkeySet, setLaunchAtLogin, settingsGet, settingsSet } from '@/lib/ipc';
+import { NO_MODEL_LABEL, useModelStore } from '@/lib/model-store';
 
 const HOTKEY_SETTINGS_KEY = 'hotkey_combo';
 const THEME_SETTINGS_KEY = 'theme';
@@ -84,7 +85,18 @@ export function comboFromKeyboardEvent(e: HotkeyCaptureEvent): string | null {
   return parts.join('+');
 }
 
-export default function General() {
+export interface GeneralProps {
+  /** Sends the user to the Models screen to pick an active model — what the
+   * "Active model" summary's row does when activated. */
+  onNavigateToModels?: () => void;
+}
+
+export default function General({ onNavigateToModels }: GeneralProps = {}) {
+  // The active-model summary reads the real curated state (B8's `models_list`,
+  // via the shared store) rather than the hardcoded "No model selected" it
+  // shipped with — which claimed no model was chosen even right after one had
+  // been made active on the Models screen.
+  const modelStore = useModelStore();
   const [permissionGranted, setPermissionGranted] = useState<boolean | null>(null);
   const [hotkeyCombo, setHotkeyCombo] = useState<string>(DEFAULT_HOTKEY_COMBO);
   const [theme, setTheme] = useState<Theme>('system');
@@ -179,6 +191,12 @@ export default function General() {
         setHotkeyConflict(true);
       });
   };
+
+  // `activeModelLabel` falls back to the first enabled model across
+  // connections (mirroring the backend's `active_provider` default) before
+  // NO_MODEL_LABEL, so the summary matches what a refine would actually use.
+  const activeModelLabel = modelStore.activeModelLabel;
+  const hasActiveModel = activeModelLabel !== NO_MODEL_LABEL;
 
   return (
     <div className="settings">
@@ -314,11 +332,23 @@ export default function General() {
       <section className="sec" data-testid="general-active-model">
         <h2 className="sec__title">Active model</h2>
         <div className="grp" style={{ marginTop: 8 }}>
-          <button className="opt" data-testid="active-model-link" style={{ color: 'inherit', textAlign: 'left' }}>
-            <span className="status-dot amber" aria-hidden="true" />
+          <button
+            className="opt"
+            data-testid="active-model-link"
+            onClick={() => onNavigateToModels?.()}
+            style={{ color: 'inherit', textAlign: 'left' }}
+          >
+            <span
+              className={`status-dot ${hasActiveModel ? 'green' : 'amber'}`}
+              aria-hidden="true"
+            />
             <div className="opt__main">
-              <div className="opt__name mono">No model selected</div>
-              <div className="opt__desc">Choose a connection and model on the Models screen.</div>
+              <div className="opt__name mono">{activeModelLabel}</div>
+              <div className="opt__desc">
+                {hasActiveModel
+                  ? 'Used for every refine. Change it on the Models screen.'
+                  : 'Choose a connection and model on the Models screen.'}
+              </div>
             </div>
           </button>
         </div>

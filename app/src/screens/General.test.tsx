@@ -3,13 +3,25 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import General, { formatHotkey } from './General';
 import * as ipc from '@/lib/ipc';
 
+// `modelsList`/`connectionList` back the active-model summary via
+// `useModelStore` — General reads the real curated active model rather than the
+// hardcoded "No model selected" it used to render.
 vi.mock('@/lib/ipc', () => ({
   getPermissionStatus: vi.fn(),
   settingsGet: vi.fn(),
   settingsSet: vi.fn(),
   hotkeySet: vi.fn(),
   setLaunchAtLogin: vi.fn(),
+  modelsList: vi.fn(),
+  connectionList: vi.fn(),
 }));
+
+const EMPTY_MODELS = {
+  models: [],
+  hasActive: false,
+  activeUnavailable: false,
+  staleActiveModelId: null,
+};
 
 const mockedIpc = vi.mocked(ipc);
 
@@ -35,6 +47,8 @@ describe('General', () => {
     mockedIpc.settingsSet.mockResolvedValue(undefined);
     mockedIpc.hotkeySet.mockResolvedValue({ ok: true, conflict: false });
     mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
+    mockedIpc.modelsList.mockResolvedValue(EMPTY_MODELS);
+    mockedIpc.connectionList.mockResolvedValue([]);
   });
 
   it('shows granted permission status, the hotkey, active-model summary, and the menu-bar link', async () => {
@@ -55,6 +69,40 @@ describe('General', () => {
     expect(screen.getByTestId('active-model-link')).toHaveTextContent('No model selected');
     expect(screen.getByTestId('general-tray-link')).toBeInTheDocument();
     expect(screen.getByTestId('setting-theme')).toBeInTheDocument();
+  });
+
+  // Regression: the summary was hardcoded to "No model selected", so it kept
+  // claiming nothing was chosen even right after a model was made active.
+  it('shows the real active model in the summary once one is active', async () => {
+    mockedIpc.modelsList.mockResolvedValue({
+      models: [
+        {
+          connectionId: '1',
+          modelId: 'qwen3:32b',
+          providerKind: 'ollama',
+          active: true,
+          favorite: false,
+        },
+      ],
+      hasActive: true,
+      activeUnavailable: false,
+      staleActiveModelId: null,
+    });
+
+    render(<General />);
+
+    await waitFor(() => expect(screen.getByTestId('active-model-link')).toHaveTextContent('qwen3:32b'));
+    expect(screen.getByTestId('active-model-link')).not.toHaveTextContent('No model selected');
+  });
+
+  it('navigates to the Models screen from the active-model summary', async () => {
+    const onNavigateToModels = vi.fn();
+    render(<General onNavigateToModels={onNavigateToModels} />);
+
+    await waitFor(() => expect(mockedIpc.modelsList).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('active-model-link'));
+
+    expect(onNavigateToModels).toHaveBeenCalledTimes(1);
   });
 
   it('shows a not-granted status when permission_status reports ungranted', async () => {
@@ -99,6 +147,8 @@ describe('Hotkey rebind dialog (C6/S34)', () => {
     mockedIpc.settingsSet.mockResolvedValue(undefined);
     mockedIpc.hotkeySet.mockResolvedValue({ ok: true, conflict: false });
     mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
+    mockedIpc.modelsList.mockResolvedValue(EMPTY_MODELS);
+    mockedIpc.connectionList.mockResolvedValue([]);
   });
 
   async function openDialog() {
@@ -171,6 +221,8 @@ describe('Launch-at-login toggle (C6)', () => {
     mockedIpc.settingsSet.mockResolvedValue(undefined);
     mockedIpc.hotkeySet.mockResolvedValue({ ok: true, conflict: false });
     mockedIpc.setLaunchAtLogin.mockResolvedValue(undefined);
+    mockedIpc.modelsList.mockResolvedValue(EMPTY_MODELS);
+    mockedIpc.connectionList.mockResolvedValue([]);
   });
 
   it('reflects the persisted state and toggles via setLaunchAtLogin', async () => {

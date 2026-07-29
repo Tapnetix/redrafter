@@ -122,6 +122,39 @@ describe('Models', () => {
     expect(screen.getByTestId('model-active-radio-claude-opus-4-6')).toHaveAttribute('aria-checked', 'false');
   });
 
+  // Regression: `aria-checked` flipping was the *only* signal that a model had
+  // been made active, and the wireframe's checked-dot CSS never matched the
+  // radio (it keys off a `.radio-row` ancestor the table has no equivalent of),
+  // so picking a model rendered no visible change at all. The row now also
+  // labels itself "active" in words.
+  it('labels the active row in words, not only via aria-checked', async () => {
+    mockedIpc.modelsList.mockResolvedValue(
+      result([
+        model({ modelId: 'claude-opus-4-6', active: true }),
+        model({ modelId: 'claude-sonnet-4-6' }),
+      ]),
+    );
+
+    render(<Models />);
+
+    expect(await screen.findByTestId('model-active-chip-claude-opus-4-6')).toHaveTextContent('active');
+    expect(screen.queryByTestId('model-active-chip-claude-sonnet-4-6')).not.toBeInTheDocument();
+  });
+
+  it('reports why a model could not be made active instead of silently doing nothing', async () => {
+    mockedIpc.modelsList.mockResolvedValue(result([model({ modelId: 'claude-opus-4-6' })]));
+    mockedIpc.modelSetActive.mockRejectedValue(
+      new Error('model claude-opus-4-6 is not enabled on connection 1'),
+    );
+
+    render(<Models />);
+    await screen.findByTestId('model-active-radio-claude-opus-4-6');
+
+    fireEvent.click(screen.getByTestId('model-active-radio-claude-opus-4-6'));
+
+    expect(await screen.findByTestId('models-action-error')).toHaveTextContent('is not enabled on connection 1');
+  });
+
   it('clicking the star toggles favorite via model_toggle_favorite', async () => {
     mockedIpc.modelsList.mockResolvedValue(result([model({ modelId: 'claude-opus-4-6' })]));
     mockedIpc.modelToggleFavorite.mockResolvedValue(result([model({ modelId: 'claude-opus-4-6', favorite: true })]));

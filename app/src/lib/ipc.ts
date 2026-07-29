@@ -293,6 +293,18 @@ export function permissionOpenSettings(): Promise<void> {
   return invoke('permission_open_settings');
 }
 
+// ── External links ──
+/**
+ * Opens `url` in the user's real browser. A plain
+ * `<a href target="_blank">` is inert inside a Tauri webview — there is no
+ * tab to open and the webview won't navigate off its own origin — so every
+ * "Get an API key ↗" link routes through the `open_external` command
+ * instead. The backend rejects anything that isn't a plain `http(s)` URL.
+ */
+export function openExternal(url: string): Promise<void> {
+  return invoke('open_external', { url });
+}
+
 // ── Refine pipeline + restore + tray (A9) ──
 /**
  * Mirrors `RefineOutcome` from src-tauri/src/orchestrator.rs, widened

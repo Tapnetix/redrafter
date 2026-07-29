@@ -333,6 +333,14 @@ const FALLBACK_MODEL: &str = "default";
 /// discovery comes back empty. Nothing is persisted if the provider is
 /// unreachable. Takes `&dyn LlmProvider` so it is unit-testable with a fake
 /// (see `tests::FakeProvider`) instead of a live HTTP endpoint.
+///
+/// The models `list_models` returns here are also persisted as the
+/// connection's `available_models`, not just mined for a default. Without
+/// that, a connection added through the first-run chooser (`FirstRun.tsx`,
+/// which never calls `connection_refresh_models`) came back with
+/// `available_models: []`, so the Connections screen's "Discovered models"
+/// checklist showed "No models discovered yet." until the user happened to
+/// press "Refresh models" — the one enabled default was curatable nowhere.
 pub async fn connect_and_store(
     store: &ConnectionStore,
     provider: &dyn LlmProvider,
@@ -346,11 +354,15 @@ pub async fn connect_and_store(
 
     let models = provider.list_models().await.unwrap_or_default();
     let default_model = models
-        .into_iter()
-        .next()
+        .first()
+        .cloned()
         .unwrap_or_else(|| FALLBACK_MODEL.to_string());
 
-    store.add(provider_kind, base_url, api_key, &[default_model])
+    let connection = store.add(provider_kind, base_url, api_key, &[default_model])?;
+    if models.is_empty() {
+        return Ok(connection);
+    }
+    store.set_available_models(&connection.id, &models)
 }
 
 /// Builds the [`LlmProvider`] implementation matching `provider_kind`,
@@ -851,6 +863,38 @@ mod tests {
         assert_eq!(store.list().unwrap(), vec![connection]);
     }
 
+    /// Regression: `connect_and_store` used to mine `list_models` for a
+    /// default and throw the rest away, leaving `available_models` empty. A
+    /// connection added from the first-run chooser (which never calls
+    /// `connection_refresh_models`) therefore had nothing for the Connections
+    /// screen's "Discovered models" checklist to show -- it read "No models
+    /// discovered yet." with no way to enable anything.
+    #[tokio::test]
+    async fn connect_and_store_persists_every_discovered_model_as_available() {
+        let store = new_store();
+        let provider = FakeProvider {
+            available: true,
+            models: vec!["qwen3-coder:latest".to_string(), "qwen3:32b".to_string()],
+        };
+
+        let connection =
+            connect_and_store(&store, &provider, "ollama", "http://localhost:11434", None)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            connection.available_models,
+            vec!["qwen3-coder:latest".to_string(), "qwen3:32b".to_string()]
+        );
+        // Still exactly one model enabled by default, the first discovered.
+        assert_eq!(
+            connection.enabled_models,
+            vec!["qwen3-coder:latest".to_string()]
+        );
+        // And it's persisted, not just in the returned value.
+        assert_eq!(store.list().unwrap(), vec![connection]);
+    }
+
     #[tokio::test]
     async fn connect_and_store_falls_back_to_a_default_model_when_discovery_is_empty() {
         let store = new_store();
@@ -870,6 +914,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(connection.enabled_models, vec!["default".to_string()]);
+        // Nothing discovered means nothing to offer for curation -- the
+        // manual model-id fallback covers this case.
+        assert!(connection.available_models.is_empty());
     }
 
     #[tokio::test]

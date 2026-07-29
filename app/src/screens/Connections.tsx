@@ -26,10 +26,16 @@ import {
   connectionRemove,
   connectionTest,
   modelAddManual,
+  openExternal,
   secretsSet,
   type Connection,
   type KeyStorageLocation,
 } from '@/lib/ipc';
+
+/** Renders a thrown/rejected IPC value as something showable. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 interface ProviderTypeInfo {
   id: string;
@@ -98,8 +104,16 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
   const [rowStatus, setRowStatus] = useState<Record<string, { status: TestStatus; message?: string }>>({});
   const [lastEnabledByConn, setLastEnabledByConn] = useState<Record<string, string[]>>({});
 
+  const [rowRefreshed, setRowRefreshed] = useState<Record<string, string>>({});
+
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>('add');
+  // Feedback for the sheet's own actions. Every mutating call used to run
+  // bare: a rejection vanished into an unhandled promise and a *success*
+  // rendered nothing at all, so "Save changes" and the model checkboxes both
+  // looked like dead controls.
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [sheetError, setSheetError] = useState('');
   const [providerType, setProviderType] = useState<string>(PROVIDER_TYPES[0].id);
   const [baseUrl, setBaseUrl] = useState<string>(PROVIDER_TYPES[0].baseUrl);
   const [apiKey, setApiKey] = useState('');
@@ -140,6 +154,8 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
     setManualRequired(false);
     setManualReason('');
     setManualModelId('');
+    setSaveState('idle');
+    setSheetError('');
   }
 
   function openAdd() {
@@ -159,6 +175,8 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
     setManualRequired(false);
     setManualReason('');
     setManualModelId('');
+    setSaveState('idle');
+    setSheetError('');
     setModalOpen(true);
   }
 
@@ -198,32 +216,61 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
   }
 
   async function runSave() {
-    if (savedConnection) {
-      // Already persisted (either opened via Edit, or just added in this
-      // same modal session): a plain edit of the base URL/key.
-      const updated = await connectionEdit({
-        id: savedConnection.id,
-        baseUrl,
-        ...(apiKey ? { apiKey } : {}),
-      });
-      setSavedConnection(updated);
-      updateConnectionInList(updated);
-      return;
-    }
+    setSheetError('');
+    setSaveState('saving');
+    try {
+      if (savedConnection) {
+        // Already persisted (either opened via Edit, or just added in this
+        // same modal session): a plain edit of the base URL/key.
+        const updated = await connectionEdit({
+          id: savedConnection.id,
+          baseUrl,
+          ...(apiKey ? { apiKey } : {}),
+        });
+        setSavedConnection(updated);
+        updateConnectionInList(updated);
+        setSaveState('saved');
+        // An *edit* is finished when it's saved, so close the sheet — leaving
+        // it open with no acknowledgement is what made "Save changes" look
+        // like it did nothing. An *add* deliberately stays open: the freshly
+        // discovered model checklist below is the next step of that flow.
+        if (modalMode === 'edit') {
+          setModalOpen(false);
+        }
+        return;
+      }
 
-    const added = await connectionAdd({ providerKind: providerType, baseUrl, apiKey });
-    setSavedConnection(added);
-    updateConnectionInList(added);
-    await discoverModels(added.id);
+      const added = await connectionAdd({ providerKind: providerType, baseUrl, apiKey });
+      setSavedConnection(added);
+      updateConnectionInList(added);
+      await discoverModels(added.id);
+      setSaveState('saved');
+    } catch (err) {
+      setSaveState('idle');
+      setSheetError(errorText(err));
+    }
   }
 
   async function toggleModelEnabled(modelId: string, checked: boolean) {
     if (!savedConnection) return;
     const current = savedConnection.enabledModels;
     const next = checked ? [...current, modelId] : current.filter((m) => m !== modelId);
-    const updated = await connectionEdit({ id: savedConnection.id, enabledModels: next });
-    setSavedConnection(updated);
-    updateConnectionInList(updated);
+    setSheetError('');
+    try {
+      const updated = await connectionEdit({ id: savedConnection.id, enabledModels: next });
+      setSavedConnection(updated);
+      updateConnectionInList(updated);
+    } catch (err) {
+      // Without this the checkbox silently snapped back with no explanation.
+      setSheetError(`Could not update enabled models: ${errorText(err)}`);
+    }
+  }
+
+  function openKeyUrl(url: string) {
+    // `openExternal` rather than the anchor's own navigation: inside a Tauri
+    // webview a `target="_blank"` href is inert (no tab to open, and the
+    // webview won't leave its origin), so this link did nothing at all.
+    void openExternal(url).catch((err) => setSheetError(`Could not open ${url}: ${errorText(err)}`));
   }
 
   function toggleFavorite(modelId: string) {
@@ -232,6 +279,7 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
 
   async function addManualModel() {
     if (!savedConnection || !manualModelId.trim()) return;
+    setSheetError('');
     try {
       const updated = await modelAddManual(savedConnection.id, manualModelId);
       setSavedConnection(updated);
@@ -239,8 +287,10 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
       setManualModelId('');
       setManualRequired(false);
       setManualReason('');
-    } catch {
-      // Leave the typed id in place so the user can correct and retry.
+    } catch (err) {
+      // Leave the typed id in place so the user can correct and retry, but
+      // say why it didn't take.
+      setSheetError(`Could not add "${manualModelId}": ${errorText(err)}`);
     }
   }
 
@@ -258,14 +308,21 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
 
   async function toggleConnectionEnabled(connection: Connection) {
     const isEnabled = connection.enabledModels.length > 0;
-    if (isEnabled) {
-      setLastEnabledByConn((prev) => ({ ...prev, [connection.id]: connection.enabledModels }));
-      const updated = await connectionEdit({ id: connection.id, enabledModels: [] });
-      updateConnectionInList(updated);
-    } else {
-      const restore = lastEnabledByConn[connection.id] ?? connection.availableModels.slice(0, 1);
-      const updated = await connectionEdit({ id: connection.id, enabledModels: restore });
-      updateConnectionInList(updated);
+    try {
+      if (isEnabled) {
+        setLastEnabledByConn((prev) => ({ ...prev, [connection.id]: connection.enabledModels }));
+        const updated = await connectionEdit({ id: connection.id, enabledModels: [] });
+        updateConnectionInList(updated);
+      } else {
+        const restore = lastEnabledByConn[connection.id] ?? connection.availableModels.slice(0, 1);
+        const updated = await connectionEdit({ id: connection.id, enabledModels: restore });
+        updateConnectionInList(updated);
+      }
+    } catch (err) {
+      setRowStatus((prev) => ({
+        ...prev,
+        [connection.id]: { status: 'error', message: errorText(err) },
+      }));
     }
   }
 
@@ -289,9 +346,20 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
   }
 
   async function refreshRow(connection: Connection) {
+    setRowRefreshed((prev) => {
+      const { [connection.id]: _dropped, ...rest } = prev;
+      return rest;
+    });
     const result = await connectionRefreshModels(connection.id);
     if (result.status === 'discovered') {
       updateConnectionInList(result.connection);
+      // Say what discovery found. Previously the only trace was the row's
+      // "N models" counter quietly changing, so a refresh that found the same
+      // models looked like the button did nothing.
+      setRowRefreshed((prev) => ({
+        ...prev,
+        [connection.id]: `${result.connection.availableModels.length} models found`,
+      }));
     } else {
       // No list endpoint (or discovery failed): open Edit so the user can
       // fall back to the manual model-id control.
@@ -375,18 +443,47 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
                       <div className="prov__name">
                         {providerInfo(connection.providerKind).label}
                         {status?.status === 'error' && <span className="chip warn">auth error</span>}
+                        {/* Success and in-flight used to render nothing at all,
+                            so a passing Test left the row byte-identical — the
+                            button looked broken. */}
+                        {status?.status === 'testing' && (
+                          <span className="chip" data-testid={`connection-test-testing-${connection.providerKind}`}>
+                            testing…
+                          </span>
+                        )}
+                        {status?.status === 'ok' && (
+                          <span className="chip ok" data-testid={`connection-test-ok-${connection.providerKind}`}>
+                            <span className="status-dot green" aria-hidden="true" /> reachable
+                          </span>
+                        )}
+                        {rowRefreshed[connection.id] && (
+                          <span className="chip" data-testid={`connection-refreshed-${connection.providerKind}`}>
+                            {rowRefreshed[connection.id]}
+                          </span>
+                        )}
                       </div>
                       <div className="prov__desc mono">
                         {connection.baseUrl} · {connection.availableModels.length} models
                         {connection.keyRef ? ' · key set' : ' · no key needed'}
                       </div>
+                      {status?.status === 'error' && status.message && (
+                        <div
+                          className="tiny"
+                          role="status"
+                          data-testid={`connection-error-${connection.providerKind}`}
+                          style={{ marginTop: 4, color: 'var(--danger, #d0433b)' }}
+                        >
+                          {status.message}
+                        </div>
+                      )}
                     </div>
                     <button
                       className="btn btn--sm"
                       data-testid={`connection-test-${connection.providerKind}`}
                       onClick={() => testRow(connection)}
+                      disabled={status?.status === 'testing'}
                     >
-                      Test
+                      {status?.status === 'testing' ? 'Testing…' : 'Test'}
                     </button>
                     <button
                       className="btn btn--sm"
@@ -504,6 +601,10 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
                     target="_blank"
                     rel="noopener noreferrer"
                     data-testid="conn-get-key-link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openKeyUrl(info.keyUrl);
+                    }}
                     style={{ color: 'var(--primary)', fontSize: 12 }}
                   >
                     Get an API key ↗
@@ -594,6 +695,17 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
               </div>
             )}
 
+            {sheetError && (
+              <p
+                className="tiny"
+                role="alert"
+                data-testid="conn-sheet-error"
+                style={{ margin: '12px 0 0', color: 'var(--danger, #d0433b)' }}
+              >
+                {sheetError}
+              </p>
+            )}
+
             <div className="modal__foot" style={{ justifyContent: 'space-between' }}>
               {isEditingSaved ? (
                 <button
@@ -606,12 +718,26 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
               ) : (
                 <span />
               )}
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {saveState === 'saved' && (
+                  <span className="chip ok" data-testid="connection-save-ok" role="status">
+                    <span className="status-dot green" aria-hidden="true" /> saved
+                  </span>
+                )}
                 <button className="btn" data-testid="connection-cancel" onClick={closeModal}>
-                  Cancel
+                  {isEditingSaved ? 'Close' : 'Cancel'}
                 </button>
-                <button className="btn btn--primary" data-testid="connection-save" onClick={runSave}>
-                  {isEditingSaved ? 'Save changes' : 'Add connection'}
+                <button
+                  className="btn btn--primary"
+                  data-testid="connection-save"
+                  onClick={runSave}
+                  disabled={saveState === 'saving'}
+                >
+                  {saveState === 'saving'
+                    ? 'Saving…'
+                    : isEditingSaved
+                      ? 'Save changes'
+                      : 'Add connection'}
                 </button>
               </div>
             </div>

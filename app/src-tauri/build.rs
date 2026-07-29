@@ -66,6 +66,8 @@ const COMMANDS: &[&str] = &[
     // Phase C feedback (C1/C5)
     "feedback_config_get",
     "feedback_config_set",
+    // Opening provider console links in the real browser
+    "open_external",
 ];
 
 fn main() {

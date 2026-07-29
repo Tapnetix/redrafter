@@ -55,6 +55,7 @@
     "allow-history-copy",
     "allow-history-clear",
     "allow-feedback-config-get",
-    "allow-feedback-config-set"
+    "allow-feedback-config-set",
+    "allow-open-external"
   ]
 }

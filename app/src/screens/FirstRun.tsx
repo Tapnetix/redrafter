@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { connectionAdd } from '@/lib/ipc';
+import { connectionAdd, openExternal } from '@/lib/ipc';
 
 type ProviderType = 'cloud' | 'local';
 type CloudProviderId = 'anthropic' | 'openai' | 'gemini' | 'openai-compat';
@@ -62,6 +62,9 @@ export default function FirstRun({ onContinue }: FirstRunProps) {
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<ConnectStatus>('idle');
   const [ollamaError, setOllamaError] = useState<string | null>(null);
+  // Reported separately from `cloudError` so a failure to hand the key URL to
+  // the OS browser doesn't masquerade as a failed provider connection.
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   const cloudProvider = CLOUD_PROVIDERS.find((p) => p.id === cloudProviderId)!;
 
@@ -218,10 +221,24 @@ export default function FirstRun({ onContinue }: FirstRunProps) {
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid="firstrun-get-key"
+                // A `target="_blank"` href is inert inside a Tauri webview, so
+                // hand the URL to the OS through `open_external` instead.
+                onClick={(e) => {
+                  e.preventDefault();
+                  setLinkError(null);
+                  void openExternal(cloudProvider.keyUrl).catch((err) =>
+                    setLinkError(err instanceof Error ? err.message : String(err)),
+                  );
+                }}
                 className="text-[var(--primary)] text-xs"
               >
                 Get a key ↗
               </a>
+              {linkError && (
+                <span role="alert" data-testid="firstrun-get-key-error" className="text-[var(--error)] text-xs">
+                  Could not open the browser: {linkError}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2.5 mt-2.5">
               <button

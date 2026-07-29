@@ -31,6 +31,7 @@
 
 pub mod command_parser;
 pub mod connections;
+pub mod external;
 pub mod feedback;
 pub mod history;
 pub mod hotkey;
@@ -56,6 +57,7 @@ use connections::{
     connection_add, connection_edit, connection_list, connection_refresh_models,
     connection_remove, connection_test, model_add_manual, resolve_api_key, ConnectionStore,
 };
+use external::open_external;
 use feedback::{feedback_config_get, feedback_config_set, FeedbackCue};
 use history::{
     history_clear, history_copy, history_get, history_list, history_restore, history_rerefine,
@@ -874,6 +876,9 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         // Phase C feedback (C1/C5)
         feedback_config_get,
         feedback_config_set,
+        // Opening provider console links in the real browser -- a plain
+        // `target="_blank"` anchor is inert inside a webview.
+        open_external,
     ]
 }
 

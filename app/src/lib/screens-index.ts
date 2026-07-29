@@ -43,14 +43,23 @@ export interface ScreenDef {
   /** Shown in both the nav item's label and the main topbar. */
   title: string;
   /** The screen component App.tsx renders for this section. */
-  Component: ComponentType<Record<string, never>> | ComponentType<{ onNavigateToModels: () => void }> | ComponentType<{ onNavigateToConnections: () => void }>;
+  Component:
+    | ComponentType<Record<string, never>>
+    | ComponentType<{ onNavigateToModels?: () => void }>
+    | ComponentType<{ onNavigateToModels: () => void }>
+    | ComponentType<{ onNavigateToConnections: () => void }>;
   /** Builds the component's props from the shared section-navigation
    * callback. Omitted for the screens that take none. */
   props?: (navigate: (section: Section) => void) => Record<string, unknown>;
 }
 
 export const SCREENS: ScreenDef[] = [
-  { id: 'general', title: 'General', Component: General },
+  {
+    id: 'general',
+    title: 'General',
+    Component: General,
+    props: (navigate) => ({ onNavigateToModels: () => navigate('models') }),
+  },
   {
     id: 'connections',
     title: 'Connections',

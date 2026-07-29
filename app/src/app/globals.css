@@ -22,6 +22,44 @@ body {
   overflow-y: auto;
 }
 
+/* The Models screen's active-model picker (`model-active-radio-*`) puts
+   `role="radio"`/`aria-checked` on the `.radio-mark` button itself, inside a
+   table row. The wireframe only styles the checked dot via an ancestor
+   (`.radio-row[aria-checked="true"] .radio-mark`), so there was no `.radio-row`
+   to match and picking a model rendered *no* visual change at all — the circle
+   stayed empty however many times you clicked it, even though the backend had
+   stored the choice. Style the checked state off the element's own
+   `aria-checked` so any `.radio-mark` shows it, ancestor or not. */
+.radio-mark[aria-checked='true'] {
+  border-color: var(--primary);
+}
+
+.radio-mark[aria-checked='true']::after {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+/* The connection row packs a name/URL block plus Test / Refresh models / Edit
+   / enable controls into one non-wrapping flex row. At the app window's
+   shipped 480px width the buttons overlapped the base-URL text. Allow the row
+   to wrap, and stop `.prov__main` (flex: 1; min-width: 0) from being squeezed
+   to nothing instead of triggering that wrap. */
+.prov {
+  flex-wrap: wrap;
+}
+
+.prov__main {
+  min-width: 12rem;
+}
+
+/* A long base URL must break rather than run under the buttons. */
+.prov__desc {
+  overflow-wrap: anywhere;
+}
+
 /* Global refine feedback cues (SC13): the in-flight spinner and completion
    HUD flash, driven by `FeedbackCues` / `useFeedbackCues`. Fixed to the
    bottom-right of the app window so they overlay the current surface. */
