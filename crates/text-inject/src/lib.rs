@@ -42,6 +42,14 @@ mod windows;
 #[cfg(any(target_os = "windows", test))]
 mod windows_util;
 
+// Pure keycode/modifier-flag helpers for the macOS backend, on the same
+// footing as `windows_util` above: compiled on macOS (where `macos.rs` uses
+// them) and under `cfg(test)` everywhere, so the "don't let a physically-held
+// modifier change which shortcut we synthesize" logic is testable on this
+// Linux dev host even though `macos.rs` can't be built here.
+#[cfg(any(target_os = "macos", test))]
+mod macos_util;
+
 pub use capture::{capture_with, CaptureSource, Captured};
 pub use inject::inject_with;
 

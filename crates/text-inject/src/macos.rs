@@ -3,10 +3,19 @@
 //! AX reads/writes use `AXUIElement`/`AXAttribute` from the
 //! `accessibility` crate against the system-wide focused UI element's
 //! `AXSelectedText` attribute. The clipboard fallback shells out to
-//! `pbcopy`/`pbpaste` and drives Cmd+C/Cmd+V via `osascript` "System
-//! Events" keystrokes, mirroring a sibling project's
-//! `src-tauri/src/platform/macos.rs` clipboard handling (kept dependency
-//! free of Tauri/objc — plain `std::process::Command`).
+//! `pbcopy`/`pbpaste` (kept dependency free of Tauri/objc — plain
+//! `std::process::Command`) and drives Cmd+C/Cmd+V as `CGEvent`s with
+//! explicitly-set modifier flags.
+//!
+//! Those keystrokes used to go through `osascript`/"System Events"
+//! `keystroke`, which merges the *physically held* modifiers into whatever it
+//! posts — so the Cmd+C we asked for arrived as Cmd+Shift+C whenever the user
+//! still had Shift down from selecting the text (or from a Shift-bearing
+//! hotkey). In Slack that is the inline-code shortcut, so redrafter silently
+//! reformatted the selection as code instead of copying it. See
+//! `macos_util.rs` for the full write-up; the fix is to build the events
+//! ourselves and call `CGEventSetFlags` with exactly Command, plus a bounded
+//! wait for the user to let go of the hotkey first.
 //!
 //! NOTE: this module only compiles on macOS (`#[cfg(target_os =
 //! "macos")]` in `lib.rs`) and cannot be built or exercised on this
@@ -16,15 +25,28 @@
 //! written here) is deferred to a macOS machine. Treat this as a
 //! faithful best-effort port until that verification pass happens.
 
+use crate::macos_util::{modifiers_are_clear, KEY_CODE_C, KEY_CODE_V};
 use crate::PlatformOps;
 use accessibility::{AXAttribute, AXUIElement};
 use anyhow::{anyhow, Context, Result};
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::string::CFString;
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How long to wait for the user to release the hotkey's modifiers before
+/// synthesizing a shortcut anyway. Setting the flags on our own events covers
+/// apps that read the modifiers off the event; this additionally covers apps
+/// that consult the live hardware state (`[NSEvent modifierFlags]`). Bounded
+/// so a user who holds the hotkey down can never stall a refine indefinitely.
+const MODIFIER_RELEASE_TIMEOUT: Duration = Duration::from_millis(400);
+
+/// Poll interval while waiting for [`MODIFIER_RELEASE_TIMEOUT`].
+const MODIFIER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct MacosOps;
 
@@ -122,29 +144,73 @@ impl PlatformOps for MacosOps {
     }
 
     fn simulate_copy(&self) -> Result<()> {
-        run_keystroke("c")
+        run_command_keystroke(KEY_CODE_C)
     }
 
     fn simulate_paste(&self) -> Result<()> {
-        run_keystroke("v")
+        run_command_keystroke(KEY_CODE_V)
     }
 }
 
-/// Simulate Cmd+`key` via `osascript`/System Events, the same mechanism
-/// a sibling project uses for keyboard injection.
-fn run_keystroke(key: &str) -> Result<()> {
-    let status = Command::new("osascript")
-        .args([
-            "-e",
-            &format!(r#"tell application "System Events" to keystroke "{key}" using command down"#),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .context("failed to run osascript")?;
-    if !status.success() {
-        anyhow::bail!("osascript keystroke exited with status {status}");
+extern "C" {
+    /// `CGEventSourceFlagsState` — the modifier flags currently in effect for
+    /// a given event source. Declared here because `core-graphics` 0.23 binds
+    /// `CGEventSource` but not this function; the CoreGraphics framework is
+    /// already linked via that crate's default `link` feature.
+    fn CGEventSourceFlagsState(state_id: CGEventSourceStateID) -> u64;
+}
+
+/// The modifier flags physically in effect right now, across the session's
+/// combined hardware + synthetic state.
+fn held_modifier_flags() -> u64 {
+    // SAFETY: `CGEventSourceFlagsState` takes a `CGEventSourceStateID` by
+    // value and returns a bitmask; no pointers or lifetimes are involved.
+    unsafe { CGEventSourceFlagsState(CGEventSourceStateID::CombinedSessionState) }
+}
+
+/// Waits (up to [`MODIFIER_RELEASE_TIMEOUT`]) for every shortcut-altering
+/// modifier to be released. Returns whether they actually cleared — the caller
+/// proceeds either way, since the explicit flags below are the primary defence.
+fn wait_for_modifiers_release() -> bool {
+    let deadline = Instant::now() + MODIFIER_RELEASE_TIMEOUT;
+    loop {
+        if modifiers_are_clear(held_modifier_flags()) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(MODIFIER_POLL_INTERVAL);
     }
+}
+
+/// Synthesizes Cmd+`keycode` as a CGEvent key-down/key-up pair with the
+/// modifier flags set to *exactly* Command.
+///
+/// The explicit `set_flags` is the fix for the Slack "my selection turned into
+/// code" report: the previous `osascript`/System Events `keystroke` inherited
+/// whatever the user was still holding (Shift from selecting the text, or the
+/// hotkey's own Ctrl/Alt), so Cmd+C could reach the app as Cmd+Shift+C — which
+/// is Slack's inline-code binding rather than Copy. Building the event
+/// ourselves means the receiving app sees the flags we chose, not the keyboard's
+/// live state. Using a layout-independent key code rather than the character
+/// `"c"` also fixes non-US layouts, where the key producing "c" isn't
+/// necessarily the one Cmd+C is bound to.
+fn run_command_keystroke(keycode: CGKeyCode) -> Result<()> {
+    wait_for_modifiers_release();
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow!("failed to create a CGEventSource for key synthesis"))?;
+
+    for keydown in [true, false] {
+        let event = CGEvent::new_keyboard_event(source.clone(), keycode, keydown)
+            .map_err(|_| anyhow!("failed to create a synthetic key event"))?;
+        // Overrides the flags the event would otherwise carry, including any
+        // live hardware modifier state.
+        event.set_flags(CGEventFlags::CGEventFlagCommand);
+        event.post(CGEventTapLocation::HID);
+    }
+
     // Give the target app a moment to react to the keystroke before we
     // read the clipboard or restore it.
     thread::sleep(Duration::from_millis(100));
