@@ -6,6 +6,8 @@ import * as ipc from '@/lib/ipc';
 vi.mock('@/lib/ipc', () => ({
   settingsGet: vi.fn(),
   settingsSet: vi.fn(),
+  // Backs the fallback dropdown, which offers the user's real models.
+  modelsList: vi.fn(),
 }));
 
 const mockedIpc = vi.mocked(ipc);
@@ -15,6 +17,12 @@ describe('Behavior settings: inject mode, quote behavior, fallback chain', () =>
     vi.resetAllMocks();
     mockedIpc.settingsGet.mockResolvedValue(null);
     mockedIpc.settingsSet.mockResolvedValue(undefined);
+    mockedIpc.modelsList.mockResolvedValue({
+      models: [],
+      hasActive: false,
+      activeUnavailable: false,
+      staleActiveModelId: null,
+    });
   });
 
   it('defaults inject mode to blind and switches to review on click, persisting via settings_set', async () => {
@@ -79,13 +87,54 @@ describe('Behavior settings: inject mode, quote behavior, fallback chain', () =>
     expect(screen.getByTestId('failure-fallback')).toBeChecked();
   });
 
-  it('starts with a two-model fallback chain and persists a change to the first model', async () => {
+  /** Seeds the user's enabled models plus a stored fallback chain — the chain
+   * no longer starts pre-populated with models the user may not have. */
+  function withChain(chain: string[]) {
+    mockedIpc.settingsGet.mockImplementation((key: string) =>
+      Promise.resolve(key === 'behavior.fallback_chain' ? JSON.stringify(chain) : null),
+    );
+    mockedIpc.modelsList.mockResolvedValue({
+      models: [
+        { connectionId: '1', modelId: 'claude-opus-4-6', providerKind: 'anthropic', active: false, favorite: false },
+        { connectionId: '2', modelId: 'qwen3:8b', providerKind: 'ollama', active: false, favorite: false },
+      ],
+      hasActive: false,
+      activeUnavailable: false,
+      staleActiveModelId: null,
+    });
+  }
+
+  it('starts with an empty fallback chain rather than models the user may not have', async () => {
+    withChain([]);
+    render(<Behavior />);
+
+    await screen.findByTestId('failure-fallback-empty');
+    expect(screen.queryByTestId('failure-fallback-model-1')).not.toBeInTheDocument();
+  });
+
+  it('only offers the models the user has actually enabled', async () => {
+    withChain(['qwen3:8b']);
+    render(<Behavior />);
+
+    const select = await screen.findByTestId('failure-fallback-model-1');
+    const offered = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
+    expect(offered).toEqual(['claude-opus-4-6', 'qwen3:8b']);
+    expect(offered).not.toContain('gemini-1.5-flash');
+  });
+
+  it('cannot add a fallback when no model is enabled', async () => {
+    render(<Behavior />);
+
+    await screen.findByTestId('failure-fallback-no-models');
+    expect(screen.getByTestId('failure-fallback-add')).toBeDisabled();
+  });
+
+  it('persists a change to the first model in the chain', async () => {
+    withChain(['gpt-5.1', 'qwen3:8b']);
     render(<Behavior />);
 
     const model1 = await screen.findByTestId('failure-fallback-model-1');
-    const model2 = screen.getByTestId('failure-fallback-model-2');
-    expect(model1).toBeInTheDocument();
-    expect(model2).toBeInTheDocument();
+    expect(screen.getByTestId('failure-fallback-model-2')).toBeInTheDocument();
 
     fireEvent.change(model1, { target: { value: 'claude-opus-4-6' } });
 
@@ -98,6 +147,7 @@ describe('Behavior settings: inject mode, quote behavior, fallback chain', () =>
   });
 
   it('removes a fallback model from the chain and persists the shortened chain', async () => {
+    withChain(['gpt-5.1', 'qwen3:8b']);
     render(<Behavior />);
 
     await screen.findByTestId('failure-fallback-model-2');
@@ -110,7 +160,8 @@ describe('Behavior settings: inject mode, quote behavior, fallback chain', () =>
     expect(screen.getByTestId('failure-fallback-model-1')).toBeInTheDocument();
   });
 
-  it('adds another fallback model to the chain and persists the lengthened chain', async () => {
+  it('adds another fallback model, starting it on a model the user actually has', async () => {
+    withChain(['gpt-5.1', 'qwen3:8b']);
     render(<Behavior />);
 
     await screen.findByTestId('failure-fallback-model-2');
@@ -121,6 +172,16 @@ describe('Behavior settings: inject mode, quote behavior, fallback chain', () =>
       'behavior.fallback_chain',
       JSON.stringify(['gpt-5.1', 'qwen3:8b', 'claude-opus-4-6']),
     );
+  });
+
+  it('keeps a stored model that is no longer enabled visible in the dropdown', async () => {
+    // Otherwise the select would render a different model than the one stored.
+    withChain(['gpt-5.1']);
+    render(<Behavior />);
+
+    const select = await screen.findByTestId('failure-fallback-model-1');
+    expect(select).toHaveValue('gpt-5.1');
+    expect(select.querySelector('optgroup[label="Not currently enabled"]')).not.toBeNull();
   });
 
   it('restores a previously persisted fallback chain from settings_get', async () => {

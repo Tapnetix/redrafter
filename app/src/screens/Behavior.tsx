@@ -24,8 +24,8 @@
 // (`history.retention_count`/`history.retention_days`) are plain
 // settings values with no backend reader yet (a later task's job), same as
 // B6b's fallback chain/retry count above.
-import { useEffect, useState } from 'react';
-import { settingsGet, settingsSet } from '@/lib/ipc';
+import { useEffect, useMemo, useState } from 'react';
+import { modelsList, settingsGet, settingsSet, type CuratedModel } from '@/lib/ipc';
 
 const DEFAULT_DIRECTION_SETTINGS_KEY = 'refine.default_direction';
 const INJECT_MODE_SETTINGS_KEY = 'behavior.inject_mode';
@@ -46,7 +46,11 @@ type OnFailureMode = 'notify' | 'fallback';
 const DEFAULT_INJECT_MODE: InjectMode = 'blind';
 const DEFAULT_QUOTE_MODE: QuoteMode = 'answer_quote';
 const DEFAULT_ON_FAILURE: OnFailureMode = 'notify';
-const DEFAULT_FALLBACK_CHAIN = ['gpt-5.1', 'qwen3:8b'];
+/** Empty, not a guess: the old default (`['gpt-5.1', 'qwen3:8b']`) named
+ * models the user had almost certainly never connected, so turning fallback
+ * mode on aimed the retry chain at models that don't exist. The user adds
+ * their own rows from the models they actually have. */
+const DEFAULT_FALLBACK_CHAIN: string[] = [];
 const DEFAULT_RETRY_COUNT = '2';
 const DEFAULT_RETENTION_COUNT = '50';
 const DEFAULT_RETENTION_DAYS = '7';
@@ -69,16 +73,42 @@ function parseBool(value: string | null, fallback: boolean): boolean {
   return fallback;
 }
 
-/** Grouped by provider, matching the wireframe's fallback-model dropdown. */
-const FALLBACK_MODEL_GROUPS: Array<{ label: string; models: string[] }> = [
-  { label: 'Anthropic', models: ['claude-opus-4-6', 'claude-sonnet-4-6'] },
-  { label: 'OpenAI', models: ['gpt-5.1'] },
-  { label: 'Google', models: ['gemini-1.5-flash'] },
-  { label: 'Ollama', models: ['qwen3:8b', 'llama3.1:8b'] },
-];
+/**
+ * Groups the user's *enabled* models by provider for the fallback-model
+ * dropdown, keeping `alsoInclude` visible even when it is no longer enabled.
+ *
+ * This list used to be a hardcoded copy of the wireframe's example dropdown
+ * (`claude-opus-4-6`, `gpt-5.1`, `gemini-1.5-flash`, …), so it offered models
+ * the user had never connected and hid the ones they had. Picking a "fallback"
+ * from it aimed the orchestrator's retry chain at a model that doesn't exist,
+ * which fails at the moment the fallback is supposed to save the refine.
+ *
+ * A chain entry that isn't enabled any more is surfaced under its own group
+ * rather than silently dropped — otherwise the `<select>` would render with a
+ * different model selected than the one actually stored.
+ */
+export function fallbackModelGroups(
+  models: CuratedModel[],
+  alsoInclude: string[],
+): Array<{ label: string; models: string[] }> {
+  const byProvider = new Map<string, string[]>();
+  for (const model of models) {
+    const list = byProvider.get(model.providerKind) ?? [];
+    if (!list.includes(model.modelId)) list.push(model.modelId);
+    byProvider.set(model.providerKind, list);
+  }
 
-/** The model a newly-added fallback row starts with. */
-const NEW_FALLBACK_MODEL = 'claude-opus-4-6';
+  const groups = [...byProvider.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, ids]) => ({ label, models: ids }));
+
+  const known = new Set(models.map((m) => m.modelId));
+  const unavailable = [...new Set(alsoInclude)].filter((id) => id && !known.has(id));
+  if (unavailable.length > 0) {
+    groups.push({ label: 'Not currently enabled', models: unavailable });
+  }
+  return groups;
+}
 
 /** Parses a settings_get result for the fallback chain, tolerating missing/malformed JSON. */
 function parseFallbackChain(value: string | null): string[] | null {
@@ -109,6 +139,9 @@ export default function Behavior() {
   const [quoteMode, setQuoteMode] = useState<QuoteMode>(DEFAULT_QUOTE_MODE);
   const [onFailure, setOnFailure] = useState<OnFailureMode>(DEFAULT_ON_FAILURE);
   const [fallbackChain, setFallbackChain] = useState<string[]>(DEFAULT_FALLBACK_CHAIN);
+  // The models the user has actually enabled (B8's curated list) — what the
+  // fallback dropdown offers, instead of the wireframe's fictional examples.
+  const [curatedModels, setCuratedModels] = useState<CuratedModel[]>([]);
   const [retryCount, setRetryCount] = useState<string>(DEFAULT_RETRY_COUNT);
   const [retentionCount, setRetentionCount] = useState<string>(DEFAULT_RETENTION_COUNT);
   const [retentionDays, setRetentionDays] = useState<string>(DEFAULT_RETENTION_DAYS);
@@ -135,6 +168,9 @@ export default function Behavior() {
       .then((value) => setOnFailure(value === 'fallback' ? 'fallback' : DEFAULT_ON_FAILURE))
       .catch(() => setOnFailure(DEFAULT_ON_FAILURE));
 
+    modelsList()
+      .then((result) => setCuratedModels(Array.isArray(result?.models) ? result.models : []))
+      .catch(() => setCuratedModels([]));
     settingsGet(FALLBACK_CHAIN_SETTINGS_KEY)
       .then((value) => setFallbackChain(parseFallbackChain(value) ?? DEFAULT_FALLBACK_CHAIN))
       .catch(() => setFallbackChain(DEFAULT_FALLBACK_CHAIN));
@@ -196,8 +232,19 @@ export default function Behavior() {
     saveFallbackChain(fallbackChain.filter((_, i) => i !== index));
   };
 
+  const modelGroups = useMemo(
+    () => fallbackModelGroups(curatedModels, fallbackChain),
+    [curatedModels, fallbackChain],
+  );
+  const hasModels = curatedModels.length > 0;
+
   const addFallbackModel = () => {
-    saveFallbackChain([...fallbackChain, NEW_FALLBACK_MODEL]);
+    // Start a new row on a model the user actually has. With none connected
+    // there is nothing meaningful to add, so the button is disabled below
+    // rather than inventing an entry.
+    const first = curatedModels[0]?.modelId;
+    if (!first) return;
+    saveFallbackChain([...fallbackChain, first]);
   };
 
   const changeRetryCount = (value: string) => {
@@ -393,7 +440,7 @@ export default function Behavior() {
                   value={model}
                   onChange={(event) => changeFallbackModel(index, event.target.value)}
                 >
-                  {FALLBACK_MODEL_GROUPS.map((group) => (
+                  {modelGroups.map((group) => (
                     <optgroup key={group.label} label={group.label}>
                       {group.models.map((option) => (
                         <option key={option} value={option}>
@@ -416,6 +463,16 @@ export default function Behavior() {
                 </button>
               </div>
             ))}
+            {!hasModels && (
+              <p className="muted tiny" data-testid="failure-fallback-no-models" style={{ margin: '4px 0 0' }}>
+                No models enabled yet — enable one on the Models screen to pick a fallback.
+              </p>
+            )}
+            {hasModels && fallbackChain.length === 0 && (
+              <p className="muted tiny" data-testid="failure-fallback-empty" style={{ margin: '4px 0 0' }}>
+                No fallback models yet. Add one to retry a failed refine on a different model.
+              </p>
+            )}
           </div>
 
           <div
@@ -427,7 +484,14 @@ export default function Behavior() {
               flexWrap: 'wrap',
             }}
           >
-            <button type="button" className="btn btn--ghost btn--sm" data-testid="failure-fallback-add" onClick={addFallbackModel}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              data-testid="failure-fallback-add"
+              onClick={addFallbackModel}
+              disabled={!hasModels}
+              title={hasModels ? undefined : 'Enable a model on the Models screen first'}
+            >
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4}>
                 <path d="M12 5v14M5 12h14" />
               </svg>{' '}

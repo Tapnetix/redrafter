@@ -6,6 +6,8 @@ import * as ipc from '@/lib/ipc';
 vi.mock('@/lib/ipc', () => ({
   settingsGet: vi.fn(),
   settingsSet: vi.fn(),
+  // Backs the fallback dropdown, which offers the user's real models.
+  modelsList: vi.fn(),
 }));
 
 const mockedIpc = vi.mocked(ipc);
@@ -15,6 +17,12 @@ describe('Behavior settings: progress feedback (S35) and history retention', () 
     vi.resetAllMocks();
     mockedIpc.settingsGet.mockResolvedValue(null);
     mockedIpc.settingsSet.mockResolvedValue(undefined);
+    mockedIpc.modelsList.mockResolvedValue({
+      models: [],
+      hasActive: false,
+      activeUnavailable: false,
+      staleActiveModelId: null,
+    });
   });
 
   it('defaults the feedback cues to spinner+sound on, HUD off', async () => {

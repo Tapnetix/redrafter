@@ -301,9 +301,20 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
 
   async function removeConnection() {
     if (!removeTarget) return;
-    await connectionRemove(removeTarget.id);
-    setConnections((prev) => prev.filter((c) => c.id !== removeTarget.id));
-    setRemoveTarget(null);
+    const target = removeTarget;
+    try {
+      await connectionRemove(target.id);
+      setConnections((prev) => prev.filter((c) => c.id !== target.id));
+      setRemoveTarget(null);
+    } catch (err) {
+      // Previously this rejected into an unhandled promise, leaving the
+      // confirmation dialog open with no clue why nothing happened.
+      setRowStatus((prev) => ({
+        ...prev,
+        [target.id]: { status: 'error', message: `Could not remove: ${errorText(err)}` },
+      }));
+      setRemoveTarget(null);
+    }
   }
 
   async function toggleConnectionEnabled(connection: Connection) {
