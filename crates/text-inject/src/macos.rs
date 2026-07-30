@@ -17,13 +17,19 @@
 //! ourselves and call `CGEventSetFlags` with exactly Command, plus a bounded
 //! wait for the user to let go of the hotkey first.
 //!
-//! NOTE: this module only compiles on macOS (`#[cfg(target_os =
-//! "macos")]` in `lib.rs`) and cannot be built or exercised on this
-//! Linux dev host. It has NOT been compiled or run for real; real-surface
-//! verification (does `AXSelectedText` actually round-trip in Safari/
-//! Notes/etc, does the exact `accessibility` 0.1.6 API line up with what's
-//! written here) is deferred to a macOS machine. Treat this as a
-//! faithful best-effort port until that verification pass happens.
+//! NOTE: this module only compiles on macOS (`#[cfg(target_os = "macos")]` in
+//! `lib.rs`), so it cannot be built from a Linux dev host — use
+//! `cargo clippy -p text-inject --target aarch64-apple-darwin --all-targets`
+//! there, which typechecks it without linking.
+//!
+//! Verified on a real Mac (macOS 14.1, arm64) so far: it compiles and links;
+//! `CGEventSetFlags` produces exactly the flags asked for; and the
+//! `pbcopy`/`pbpaste` pair round-trips non-ASCII text correctly with
+//! [`UTF8_LOCALE`] forced (and demonstrably does not without it). Still
+//! unverified on real hardware: that `AXSelectedText` round-trips in a given
+//! app, and that a synthesized shortcut lands with the intended modifiers in
+//! the receiving app — both need Accessibility permission, which a shell
+//! session doesn't have.
 
 use crate::macos_util::{modifiers_are_clear, KEY_CODE_C, KEY_CODE_V};
 use crate::PlatformOps;
@@ -47,6 +53,29 @@ const MODIFIER_RELEASE_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// Poll interval while waiting for [`MODIFIER_RELEASE_TIMEOUT`].
 const MODIFIER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// The locale forced on `pbcopy`/`pbpaste`.
+///
+/// Both pick their text encoding from the locale environment, and fall back to
+/// **Mac OS Roman** when it says nothing. A `.app` launched from Finder, the
+/// Dock, or a login item inherits no `LANG`/`LC_*` at all — only a
+/// shell-launched process gets those — so every non-ASCII refine came back
+/// mangled: the UTF-8 bytes for "Это" (`d0 ad d1 82 d0 be`) were decoded as Mac
+/// OS Roman and pasted as "–≠—Ç–æ".
+///
+/// Worse, this was invisible to `inject_via_clipboard`'s read-back check:
+/// `pbpaste` re-encodes with the same wrong locale, so the bytes round-trip
+/// intact and the verify passed while the pasteboard held nonsense.
+///
+/// `LC_ALL` as well as `LC_CTYPE` because `LC_ALL` wins over `LC_CTYPE` when
+/// set, and we want a deterministic encoding regardless of what the app
+/// happened to inherit.
+const UTF8_LOCALE: &str = "en_US.UTF-8";
+
+/// Forces [`UTF8_LOCALE`] on a pasteboard subprocess.
+fn utf8_locale(cmd: &mut Command) -> &mut Command {
+    cmd.env("LC_ALL", UTF8_LOCALE).env("LC_CTYPE", UTF8_LOCALE)
+}
 
 pub struct MacosOps;
 
@@ -110,7 +139,7 @@ impl PlatformOps for MacosOps {
     }
 
     fn clipboard_get(&self) -> Result<Option<String>> {
-        let output = Command::new("pbpaste")
+        let output = utf8_locale(&mut Command::new("pbpaste"))
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output()
@@ -123,7 +152,7 @@ impl PlatformOps for MacosOps {
     }
 
     fn clipboard_set(&self, text: &str) -> Result<()> {
-        let mut child = Command::new("pbcopy")
+        let mut child = utf8_locale(&mut Command::new("pbcopy"))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -215,4 +244,82 @@ fn run_command_keystroke(keycode: CGKeyCode) -> Result<()> {
     // read the clipboard or restore it.
     thread::sleep(Duration::from_millis(100));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    /// The pasteboard corruption this guards against reproduces as: UTF-8 bytes
+    /// decoded as Mac OS Roman, so "Это" pastes as "–≠—Ç–æ". Fast and
+    /// dependency-free — it only inspects the command we would spawn, so it
+    /// runs anywhere macOS builds, unlike the real-pasteboard test below.
+    #[test]
+    fn pasteboard_commands_force_a_utf8_locale() {
+        let mut cmd = Command::new("pbcopy");
+        utf8_locale(&mut cmd);
+
+        let envs: Vec<(Option<&OsStr>, Option<&OsStr>)> = cmd
+            .get_envs()
+            .map(|(k, v)| (Some(k), v))
+            .collect();
+
+        for key in ["LC_ALL", "LC_CTYPE"] {
+            let found = envs
+                .iter()
+                .find(|(k, _)| *k == Some(OsStr::new(key)))
+                .unwrap_or_else(|| panic!("{key} is not set on the pasteboard command"));
+            assert_eq!(
+                found.1,
+                Some(OsStr::new(UTF8_LOCALE)),
+                "{key} must pin the pasteboard encoding to UTF-8"
+            );
+        }
+    }
+
+    /// Drives the REAL pasteboard. `#[ignore]`d because it needs both a live
+    /// pasteboard server (absent on a headless CI agent) and an environment
+    /// with no inherited locale — the condition a Finder-launched .app is in,
+    /// and the only one under which the bug reproduces. Run it by hand on a
+    /// Mac with:
+    ///
+    /// ```text
+    /// env -u LANG -u LC_ALL -u LC_CTYPE cargo test -p text-inject \
+    ///     --lib clipboard_round_trips -- --ignored --nocapture
+    /// ```
+    ///
+    /// Without `utf8_locale` this fails with the pasteboard holding
+    /// "–≠—Ç–æ …" while our own read-back still reports the correct text —
+    /// which is exactly why `inject_via_clipboard`'s verify never caught it.
+    #[test]
+    #[ignore = "needs a live pasteboard and a locale-free environment; see the doc comment"]
+    fn clipboard_round_trips_non_ascii_without_an_inherited_locale() {
+        const RUSSIAN: &str = "Это очень простой тест перевода.";
+        assert!(
+            std::env::var("LANG").is_err() && std::env::var("LC_ALL").is_err(),
+            "run with `env -u LANG -u LC_ALL -u LC_CTYPE`, else this proves nothing"
+        );
+
+        let ops = MacosOps::new();
+        let saved = ops.clipboard_get().expect("pbpaste");
+        ops.clipboard_set(RUSSIAN).expect("pbcopy");
+
+        // Read the pasteboard independently, forcing UTF-8, so a wrong-encoding
+        // write can't hide behind a matching wrong-encoding read.
+        let out = Command::new("pbpaste")
+            .env("LC_ALL", UTF8_LOCALE)
+            .env("LC_CTYPE", UTF8_LOCALE)
+            .output()
+            .expect("pbpaste");
+        let actual = String::from_utf8_lossy(&out.stdout).to_string();
+
+        let round_trip = ops.clipboard_get().expect("pbpaste").unwrap_or_default();
+        if let Some(prior) = saved {
+            let _ = ops.clipboard_set(&prior);
+        }
+
+        assert_eq!(actual, RUSSIAN, "the pasteboard does not hold correct UTF-8");
+        assert_eq!(round_trip, RUSSIAN, "our own read-back is wrong");
+    }
 }
