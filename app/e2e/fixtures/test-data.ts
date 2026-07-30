@@ -29,6 +29,9 @@ export interface RefineFailureFixture {
 
 export interface TestData {
   appName: string;
+  /** Seeds `hud_state` — what the in-flight/failure chip is showing
+   * (`app/src-tauri/src/hud.rs`). */
+  hudState?: { kind: 'refining' | 'error'; text: string } | null;
   /** Seeds `review_pending` — the draft the review panel opens on when the
    * inject mode is "Review & confirm" (`app/src-tauri/src/review.rs`). */
   pendingReview?: RefineFixture | null;

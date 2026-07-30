@@ -62,6 +62,7 @@ use connections::{
     connection_remove, connection_test, model_add_manual, resolve_api_key, ConnectionStore,
 };
 use claude_code::{claude_code_connect, claude_code_status};
+use hud::hud_state;
 use external::open_external;
 use review::{review_accept, review_discard, review_pending};
 use feedback::{feedback_config_get, feedback_config_set, FeedbackCue};
@@ -593,7 +594,7 @@ impl TrayStatusSink for SystemTrayStatus {
             RefineStatus::Refining => {
                 tray::set_status_message(app, "Refining…");
                 tray::set_busy_icon(app, true);
-                hud::show(app);
+                hud::show_refining(app);
             }
             // Restore the resting Ready/Paused tooltip rather than leaving a
             // transient "idle" string on it.
@@ -680,6 +681,15 @@ async fn run_refine_emit_with_checker<R: tauri::Runtime, C: AccessibilityChecker
 
     if let Ok(cues) = feedback::on_refine_done(&settings) {
         emit_feedback_cues(app, REFINE_FEEDBACK_DONE_EVENT, cues);
+    }
+
+    // A refine triggered by the global hotkey returns its Result to a
+    // JoinHandle the shortcut handler discards, so an `Err` here was never
+    // read, logged or shown: the spinner appeared, vanished, and the user had
+    // no way to learn why. Report it on the chip and to the log.
+    if let Err(reason) = &result {
+        eprintln!("[refine] failed: {reason}");
+        hud::show_error(app, reason);
     }
 
     // Review mode parks the draft instead of injecting it. Show the panel, or
@@ -916,6 +926,8 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         // Refining through the Claude Code login instead of a Console key.
         claude_code_status,
         claude_code_connect,
+        // What the in-flight/error chip is showing.
+        hud_state,
         // The review panel (Behavior's "Review & confirm" inject mode).
         review_pending,
         review_accept,

@@ -456,6 +456,10 @@ export function getTauriMockScript(data: TestData): string {
           // refine, and the accept/discard that resolve it. review_accept is
           // what hides the panel and restores focus before injecting, so the
           // spec asserts on it rather than on inject_text. ──
+          // ── In-flight/failure chip (hud.rs) ──
+          case 'hud_state':
+            return TEST_DATA.hudState ?? null;
+
           case 'review_pending':
             return state.pendingReview ?? null;
           case 'review_accept':

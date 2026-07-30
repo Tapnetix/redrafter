@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hud-state"
+description = "Enables the hud_state command without any pre-configured scope."
+commands.allow = ["hud_state"]
+
+[[permission]]
+identifier = "deny-hud-state"
+description = "Denies the hud_state command without any pre-configured scope."
+commands.deny = ["hud_state"]

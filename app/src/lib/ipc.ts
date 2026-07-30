@@ -293,6 +293,23 @@ export function permissionOpenSettings(): Promise<void> {
   return invoke('permission_open_settings');
 }
 
+// ── In-flight / failure chip ──
+/** What the chip beside the pointer is showing. */
+export interface HudState {
+  /** `refining` (spinner) or `error` (what went wrong). */
+  kind: 'refining' | 'error';
+  /** The failure text; empty while refining. */
+  text: string;
+}
+
+/**
+ * What the chip should show right now. Read on mount, since the window is
+ * created at startup and may predate the first `hud:state` event.
+ */
+export function hudState(): Promise<HudState | null> {
+  return Promise.resolve(invoke<HudState | null>('hud_state'));
+}
+
 // ── Review panel (Behavior's "Review & confirm" inject mode) ──
 /**
  * The draft awaiting review, or `null` when nothing is pending (e.g. the panel

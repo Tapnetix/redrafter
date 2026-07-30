@@ -59,6 +59,7 @@
     "allow-open-external",
     "allow-claude-code-status",
     "allow-claude-code-connect",
+    "allow-hud-state",
     "allow-review-pending",
     "allow-review-accept",
     "allow-review-discard"

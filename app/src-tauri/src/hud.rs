@@ -23,7 +23,10 @@
 // no binding for it), which is untestable without Accessibility permission --
 // see this module's tests and the README note.
 
-use tauri::{Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
+use tauri::{Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 /// Window label for the HUD, used for every later lookup.
 pub const HUD_LABEL: &str = "hud";
@@ -94,6 +97,80 @@ fn hud_disabled() -> bool {
     crate::auxiliary_windows_disabled()
 }
 
+/// What the chip is currently saying.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudState {
+    /// `"refining"` (spinner) or `"error"` (what went wrong).
+    pub kind: String,
+    /// Shown for an error; empty while refining.
+    pub text: String,
+}
+
+impl HudState {
+    pub fn refining() -> Self {
+        Self { kind: "refining".to_string(), text: String::new() }
+    }
+    pub fn error(text: &str) -> Self {
+        Self { kind: "error".to_string(), text: text.to_string() }
+    }
+}
+
+/// Event the chip listens on.
+pub const HUD_STATE_EVENT: &str = "hud:state";
+
+/// How long a failure stays on screen before the chip dismisses itself.
+const ERROR_VISIBLE_MS: u64 = 6_000;
+
+static HUD_MESSAGE: LazyLock<Mutex<Option<HudState>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Bumped on every state change, so an auto-dismiss timer only hides the chip
+/// if it is still showing the message that scheduled it.
+static HUD_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Tauri command: what the chip should show right now. Read on mount, since
+/// the window may have been created before the first event was emitted.
+#[tauri::command]
+pub fn hud_state() -> Option<HudState> {
+    HUD_MESSAGE.lock().unwrap().clone()
+}
+
+fn publish<R: Runtime>(app: &tauri::AppHandle<R>, state: HudState) -> u64 {
+    *HUD_MESSAGE.lock().unwrap() = Some(state.clone());
+    let generation = HUD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Err(e) = app.emit(HUD_STATE_EVENT, state) {
+        eprintln!("[hud] failed to publish the chip state: {e}");
+    }
+    generation
+}
+
+/// Shows the in-flight chip.
+pub fn show_refining<R: Runtime>(app: &tauri::AppHandle<R>) {
+    publish(app, HudState::refining());
+    show(app);
+}
+
+/// Shows a failure on the chip, then dismisses it after a few seconds.
+///
+/// Without this a failed refine was *completely* silent: the global-shortcut
+/// handler drops the JoinHandle its dispatch returns, so the `Err` was never
+/// read, logged or surfaced anywhere. The user saw the spinner appear, vanish,
+/// and nothing else — with no way to find out why.
+pub fn show_error<R: Runtime>(app: &tauri::AppHandle<R>, message: &str) {
+    let generation = publish(app, HudState::error(message));
+    show(app);
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ERROR_VISIBLE_MS));
+        // Only dismiss if nothing has happened since; a refine started in the
+        // meantime owns the chip now.
+        if HUD_GENERATION.load(Ordering::SeqCst) == generation {
+            hide(&handle);
+        }
+    });
+}
+
 /// Builds the HUD window, hidden. Called once from the app's `setup`.
 ///
 /// Failure is logged and swallowed: a missing HUD must never stop the app from
@@ -132,19 +209,27 @@ pub fn create<R: Runtime>(app: &tauri::AppHandle<R>) {
 /// Shows the chip beside the pointer. No-op when the window is missing.
 pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) {
     let Some(window) = app.get_webview_window(HUD_LABEL) else {
+        // Either creation failed or the aux windows are gated off. Say which,
+        // because "the chip never appeared" is otherwise indistinguishable
+        // from "the chip appeared somewhere I wasn't looking".
+        eprintln!(
+            "[hud] no HUD window to show (creation failed, or disabled via the env gate: {})",
+            crate::auxiliary_windows_disabled()
+        );
         return;
     };
 
-    if let Ok(cursor) = app.cursor_position() {
-        let monitor = window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| window.primary_monitor().ok().flatten());
-        if let Some(monitor) = monitor {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+
+    match (app.cursor_position(), monitor.as_ref()) {
+        (Ok(cursor), Some(monitor)) => {
             let pos = monitor.position();
             let size = monitor.size();
-            let scale = window.scale_factor().unwrap_or(1.0);
+            let scale = window.scale_factor().unwrap_or_else(|_| monitor.scale_factor());
             let (x, y) = position_near_cursor(
                 (cursor.x, cursor.y),
                 (HUD_WIDTH * scale, HUD_HEIGHT * scale),
@@ -155,14 +240,41 @@ pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) {
                     height: size.height as f64,
                 },
             );
-            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+            eprintln!(
+                "[hud] cursor=({:.0},{:.0}) monitor={}x{}+{}+{} scale={scale} -> chip at ({x:.0},{y:.0})",
+                cursor.x, cursor.y, size.width, size.height, pos.x, pos.y
+            );
+            if let Err(e) = window.set_position(tauri::PhysicalPosition::new(x, y)) {
+                eprintln!("[hud] could not position the chip: {e}");
+            }
+        }
+        (cursor, monitor) => {
+            // Without a cursor or a monitor there is nothing to anchor to.
+            // Centre rather than leaving the chip wherever it was built, which
+            // may be off-screen entirely.
+            eprintln!(
+                "[hud] cannot anchor to the pointer (cursor: {}, monitor: {}) — centring instead",
+                cursor.map(|_| "ok").unwrap_or("unavailable"),
+                if monitor.is_some() { "ok" } else { "unavailable" }
+            );
+            let _ = window.center();
         }
     }
 
     // `show` only — never `set_focus`, which would pull the frontmost app out
     // from under the paste that follows.
-    let _ = window.show();
+    if let Err(e) = window.show() {
+        eprintln!("[hud] show failed: {e}");
+    }
     let _ = window.set_always_on_top(true);
+    // macOS in particular: a window belonging to an app that isn't frontmost
+    // can be ordered in without becoming visible. Report what the window
+    // system actually thinks, so "it never appeared" is a fact rather than a
+    // guess.
+    match window.is_visible() {
+        Ok(visible) => eprintln!("[hud] window reports visible={visible}"),
+        Err(e) => eprintln!("[hud] could not read window visibility: {e}"),
+    }
 }
 
 /// Hides the chip. No-op when the window is missing.
