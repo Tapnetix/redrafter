@@ -91,7 +91,7 @@ pub fn hud_disabled_from(value: Option<&str>) -> bool {
 }
 
 fn hud_disabled() -> bool {
-    hud_disabled_from(std::env::var(DISABLE_HUD_ENV).ok().as_deref())
+    crate::auxiliary_windows_disabled()
 }
 
 /// Builds the HUD window, hidden. Called once from the app's `setup`.

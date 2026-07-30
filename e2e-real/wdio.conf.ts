@@ -101,11 +101,11 @@ export const config: WebdriverIO.Config = {
   // this spawns it synchronously ahead of each session and tears it down
   // after. Install it once via `cargo install tauri-driver` (see README).
   beforeSession: () => {
-    // The HUD is a second webview, and tauri-driver/WebKitWebDriver cannot
+    // The HUD and review panel are extra webviews, and tauri-driver/WebKitWebDriver cannot
     // open a session against an app that exposes one — session creation times
     // out. Suppress it for the duration of a WebDriver run; the refine loop
     // this harness exercises is unaffected.
-    process.env.REDRAFTER_DISABLE_HUD = '1';
+    process.env.REDRAFTER_DISABLE_AUX_WINDOWS = '1';
     tauriDriverProcess = spawn('tauri-driver', [], {
       stdio: [null, process.stdout, process.stderr],
     });

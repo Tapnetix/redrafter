@@ -28,6 +28,8 @@ export function getTauriMockScript(data: TestData): string {
       // this rather than TEST_DATA itself.
       const state = {
         permissionGranted: !!TEST_DATA.permissionGranted,
+        // The draft the review panel opens on, cleared by accept/discard.
+        pendingReview: TEST_DATA.pendingReview || null,
         // 'paused'/'launch_at_login' mirror the settings keys the real
         // tray_pause/tray_resume/tray_set_launch_login commands persist
         // (B17); TEST_DATA.settings can still override them directly.
@@ -448,6 +450,19 @@ export function getTauriMockScript(data: TestData): string {
             return null;
           // Cancels the in-flight refine (A9); nothing for the mock to track.
           case 'cancel_refine':
+            return null;
+
+          // ── Review panel (review.rs): the draft parked by a review-mode
+          // refine, and the accept/discard that resolve it. review_accept is
+          // what hides the panel and restores focus before injecting, so the
+          // spec asserts on it rather than on inject_text. ──
+          case 'review_pending':
+            return state.pendingReview ?? null;
+          case 'review_accept':
+            state.pendingReview = null;
+            return null;
+          case 'review_discard':
+            state.pendingReview = null;
             return null;
 
           // ── Tray (A9 display-only carve-out; only tray_quit is wired) ──

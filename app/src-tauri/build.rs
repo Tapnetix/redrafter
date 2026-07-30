@@ -71,6 +71,10 @@ const COMMANDS: &[&str] = &[
     // Refining through the Claude Code login
     "claude_code_status",
     "claude_code_connect",
+    // The review panel
+    "review_pending",
+    "review_accept",
+    "review_discard",
 ];
 
 fn main() {

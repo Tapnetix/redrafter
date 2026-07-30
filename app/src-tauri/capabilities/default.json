@@ -58,6 +58,9 @@
     "allow-feedback-config-set",
     "allow-open-external",
     "allow-claude-code-status",
-    "allow-claude-code-connect"
+    "allow-claude-code-connect",
+    "allow-review-pending",
+    "allow-review-accept",
+    "allow-review-discard"
   ]
 }

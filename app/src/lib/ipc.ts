@@ -293,6 +293,33 @@ export function permissionOpenSettings(): Promise<void> {
   return invoke('permission_open_settings');
 }
 
+// ── Review panel (Behavior's "Review & confirm" inject mode) ──
+/**
+ * The draft awaiting review, or `null` when nothing is pending (e.g. the panel
+ * was reopened after the draft was already resolved).
+ */
+export function reviewPending(): Promise<RefineOutcome | null> {
+  return Promise.resolve(invoke<RefineOutcome | null>('review_pending'));
+}
+
+/**
+ * Accepts `text` and injects it into the app the refine came from.
+ *
+ * Deliberately not `injectText`: the review panel holds focus while the user
+ * reads, so the backend hides the panel and waits for focus to return before
+ * injecting — otherwise the refined text lands in the panel itself. That
+ * ordering lives in Rust so it can't race with the frontend.
+ */
+export function reviewAccept(text: string): Promise<void> {
+  return invoke('review_accept', { text });
+}
+
+/** Discards the pending draft and closes the panel, leaving the original
+ * text untouched in the source app. */
+export function reviewDiscard(): Promise<void> {
+  return invoke('review_discard');
+}
+
 // ── Claude Code login (opt-in alternative to a Console API key) ──
 /** What `claudeCodeStatus` reports about the signed-in Claude Code account. */
 export interface ClaudeCodeSummary {

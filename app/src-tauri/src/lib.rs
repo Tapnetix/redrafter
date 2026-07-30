@@ -42,6 +42,7 @@ pub mod models;
 pub mod orchestrator;
 pub mod permission;
 pub mod presets;
+pub mod review;
 pub mod prompt_builder;
 pub mod quote_parser;
 pub mod secrets;
@@ -62,6 +63,7 @@ use connections::{
 };
 use claude_code::{claude_code_connect, claude_code_status};
 use external::open_external;
+use review::{review_accept, review_discard, review_pending};
 use feedback::{feedback_config_get, feedback_config_set, FeedbackCue};
 use history::{
     history_clear, history_copy, history_get, history_list, history_restore, history_rerefine,
@@ -680,6 +682,16 @@ async fn run_refine_emit_with_checker<R: tauri::Runtime, C: AccessibilityChecker
         emit_feedback_cues(app, REFINE_FEEDBACK_DONE_EVENT, cues);
     }
 
+    // Review mode parks the draft instead of injecting it. Show the panel, or
+    // the refine has spent tokens on an answer nobody will ever see.
+    if matches!(result, Ok(RefineFlow::PendingReview(_))) {
+        review::show(app);
+        use tauri::Emitter;
+        if let Err(e) = app.emit(review::REVIEW_PENDING_EVENT, ()) {
+            eprintln!("[review] failed to announce the pending draft: {e}");
+        }
+    }
+
     result
 }
 
@@ -904,6 +916,10 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         // Refining through the Claude Code login instead of a Console key.
         claude_code_status,
         claude_code_connect,
+        // The review panel (Behavior's "Review & confirm" inject mode).
+        review_pending,
+        review_accept,
+        review_discard,
     ]
 }
 
@@ -930,6 +946,20 @@ fn open_stores<R: tauri::Runtime>(
     let presets = PresetStore::open(&app_data.join("presets.sqlite3"))?;
     let history = HistoryStore::open(&app_data.join("history.sqlite3"))?;
     Ok((settings, connections, secrets, presets, history))
+}
+
+/// Whether the auxiliary windows (the in-flight HUD and the review panel)
+/// should be suppressed.
+///
+/// `tauri-driver` cannot open a WebDriver session against an app that exposes
+/// more than one webview — session creation simply times out — which would
+/// cost us `e2e-real`, the only harness that drives the real packaged binary.
+/// Set for the duration of a WebDriver run by `e2e-real/wdio.conf.ts`.
+/// `REDRAFTER_DISABLE_HUD` is still honoured as the name this shipped under.
+pub fn auxiliary_windows_disabled() -> bool {
+    ["REDRAFTER_DISABLE_AUX_WINDOWS", "REDRAFTER_DISABLE_HUD"]
+        .iter()
+        .any(|name| hud::hud_disabled_from(std::env::var(name).ok().as_deref()))
 }
 
 /// The Tauri app's entry point, called by `main.rs`.
@@ -995,6 +1025,7 @@ pub fn run() {
             // create a window (which risks activating the app) or paint an
             // unloaded webview. Failures are logged inside `create`.
             hud::create(&handle);
+            review::create(&handle);
 
             Ok(())
         })

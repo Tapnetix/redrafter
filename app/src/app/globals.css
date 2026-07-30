@@ -28,6 +28,7 @@ body {
    square with transparent corners, and leaving the gradient behind it would
    show through those corners as coloured nubs. */
 .rail__logo,
+img.cap__badge,
 img.setup__logo {
   background: none;
   box-shadow: none;
@@ -37,6 +38,7 @@ img.setup__logo {
 }
 
 .rail__logo img,
+img.cap__badge,
 img.setup__logo {
   display: block;
   width: 100%;

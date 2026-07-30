@@ -29,6 +29,9 @@ export interface RefineFailureFixture {
 
 export interface TestData {
   appName: string;
+  /** Seeds `review_pending` — the draft the review panel opens on when the
+   * inject mode is "Review & confirm" (`app/src-tauri/src/review.rs`). */
+  pendingReview?: RefineFixture | null;
   /** Seed for the mocked `permission_status` command's `granted` field (A6/A12). */
   permissionGranted?: boolean;
   /** Backs `settings_get`/`settings_set`: key -> stored value (A12). */
