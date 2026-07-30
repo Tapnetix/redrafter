@@ -62,21 +62,62 @@ struct AnthropicModel {
     id: String,
 }
 
+/// How a request authenticates to the Anthropic API.
+///
+/// Console API keys go in `x-api-key`; the OAuth access tokens Claude Code
+/// stores (`sk-ant-oat…`, carrying a `user:inference` scope) go in
+/// `Authorization: Bearer`. Sending an OAuth token as `x-api-key` is rejected
+/// with `invalid x-api-key`, so the two are not interchangeable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnthropicAuth {
+    /// A Console API key (`sk-ant-api…`), billed to an organization.
+    ApiKey(String),
+    /// An OAuth access token, billed against the account's subscription.
+    OAuth(String),
+}
+
+impl AnthropicAuth {
+    /// The header name/value this credential authenticates with.
+    pub fn header(&self) -> (&'static str, &str) {
+        match self {
+            AnthropicAuth::ApiKey(key) => ("x-api-key", key.as_str()),
+            AnthropicAuth::OAuth(token) => ("authorization", token.as_str()),
+        }
+    }
+
+    /// The value to send, pre-formatted (Bearer prefix for OAuth).
+    pub fn header_value(&self) -> String {
+        match self {
+            AnthropicAuth::ApiKey(key) => key.clone(),
+            AnthropicAuth::OAuth(token) => format!("Bearer {token}"),
+        }
+    }
+}
+
 /// An LLM provider that speaks Anthropic's Messages API
-/// (`POST /v1/messages`, `GET /v1/models`), using `x-api-key` +
-/// `anthropic-version` headers and a top-level `system` prompt rather than
-/// an OpenAI-style `system` message in the `messages` array.
+/// (`POST /v1/messages`, `GET /v1/models`), with `anthropic-version` and a
+/// top-level `system` prompt rather than an OpenAI-style `system` message in
+/// the `messages` array. Authenticates with either a Console API key or an
+/// OAuth access token — see [`AnthropicAuth`].
 pub struct AnthropicProvider {
     base_url: String,
-    api_key: String,
+    auth: AnthropicAuth,
     client: Client,
 }
 
 impl AnthropicProvider {
     pub fn new(base_url: &str, api_key: &str) -> Self {
+        // Trimmed because keys are pasted: a trailing newline or space makes
+        // reqwest refuse to build the header at all, and the resulting send
+        // error was indistinguishable from "the server is down".
+        Self::with_auth(base_url, AnthropicAuth::ApiKey(api_key.trim().to_string()))
+    }
+
+    /// Builds a provider authenticating with `auth`.
+    pub fn with_auth(base_url: &str, auth: AnthropicAuth) -> Self {
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: api_key.to_string(),
+            base_url: base_url.trim().trim_end_matches('/').to_string(),
+            auth,
             client: Client::builder()
                 .timeout(REQUEST_TIMEOUT)
                 .build()
@@ -88,6 +129,24 @@ impl AnthropicProvider {
     pub fn with_default_base(api_key: &str) -> Self {
         Self::new(DEFAULT_BASE_URL, api_key)
     }
+
+    /// Applies the configured credential to a request.
+    fn authenticate(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let (name, _) = self.auth.header();
+        request.header(name, self.auth.header_value())
+    }
+}
+
+/// Pulls `error.message` out of an Anthropic error body, if it looks like one.
+/// Returns `None` for anything unparseable so the caller can fall back to the
+/// bare status rather than printing a wall of HTML.
+fn extract_error_message(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let message = value.get("error")?.get("message")?.as_str()?.trim();
+    if message.is_empty() {
+        return None;
+    }
+    Some(message.to_string())
 }
 
 /// Splits the request's messages into an Anthropic top-level `system`
@@ -135,9 +194,7 @@ impl LlmProvider for AnthropicProvider {
         };
 
         let send_future = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
+            .authenticate(self.client.post(&url))
             .header("anthropic-version", ANTHROPIC_VERSION)
             .json(&body)
             .send();
@@ -184,9 +241,7 @@ impl LlmProvider for AnthropicProvider {
     async fn list_models(&self) -> Result<Vec<String>> {
         let url = format!("{}/v1/models", self.base_url);
         let response = self
-            .client
-            .get(&url)
-            .header("x-api-key", &self.api_key)
+            .authenticate(self.client.get(&url))
             .header("anthropic-version", ANTHROPIC_VERSION)
             .send()
             .await
@@ -208,18 +263,126 @@ impl LlmProvider for AnthropicProvider {
     }
 
     async fn is_available(&self) -> bool {
+        self.availability().await.is_ok()
+    }
+
+    async fn availability(&self) -> std::result::Result<(), String> {
         let url = format!("{}/v1/models", self.base_url);
-        self.client
-            .get(&url)
-            .header("x-api-key", &self.api_key)
+        let response = self
+            .authenticate(self.client.get(&url))
             .header("anthropic-version", ANTHROPIC_VERSION)
             .send()
             .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
+            .map_err(|e| format!("could not reach {url}: {e}"))?;
+
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        // Anthropic replies with `{"error":{"message":"…"}}`; surface that
+        // message ("API key is invalid.", "credit balance is too low", …)
+        // rather than the bare status, since it is the actionable half.
+        let body = response.text().await.unwrap_or_default();
+        Err(match extract_error_message(&body) {
+            Some(message) => format!("{status}: {message}"),
+            None => format!("{status} from {url}"),
+        })
     }
 
     fn provider_name(&self) -> &'static str {
         "anthropic"
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn a_console_api_key_goes_in_x_api_key_unprefixed() {
+        let auth = AnthropicAuth::ApiKey("sk-ant-api-xyz".to_string());
+        assert_eq!(auth.header().0, "x-api-key");
+        assert_eq!(auth.header_value(), "sk-ant-api-xyz");
+    }
+
+    #[test]
+    fn an_oauth_token_goes_in_authorization_with_a_bearer_prefix() {
+        // Verified against the live API: an OAuth token sent as `x-api-key`
+        // is rejected with `invalid x-api-key` (401), while the same token as
+        // `Authorization: Bearer` authenticates.
+        let auth = AnthropicAuth::OAuth("sk-ant-oat-xyz".to_string());
+        assert_eq!(auth.header().0, "authorization");
+        assert_eq!(auth.header_value(), "Bearer sk-ant-oat-xyz");
+    }
+
+    #[test]
+    fn the_two_credential_kinds_never_share_a_header() {
+        let key = AnthropicAuth::ApiKey("k".to_string());
+        let oauth = AnthropicAuth::OAuth("k".to_string());
+        assert_ne!(key.header().0, oauth.header().0);
+        assert_ne!(key.header_value(), oauth.header_value());
+    }
+
+    #[test]
+    fn new_defaults_to_api_key_auth_so_existing_callers_are_unchanged() {
+        let provider = AnthropicProvider::new("https://api.anthropic.com/", "sk-ant-api-1");
+        assert_eq!(provider.auth, AnthropicAuth::ApiKey("sk-ant-api-1".to_string()));
+        assert_eq!(provider.base_url, "https://api.anthropic.com");
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_the_actionable_message_from_an_anthropic_error_body() {
+        // The exact body the live API returns for a bad key.
+        let body = r#"{"type":"error","error":{"type":"authentication_error","message":"API key is invalid."},"request_id":null}"#;
+        assert_eq!(
+            extract_error_message(body).as_deref(),
+            Some("API key is invalid.")
+        );
+    }
+
+    #[test]
+    fn extracts_the_missing_version_header_message() {
+        let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"anthropic-version: header is required"}}"#;
+        assert_eq!(
+            extract_error_message(body).as_deref(),
+            Some("anthropic-version: header is required")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_none_for_a_non_json_body() {
+        // A proxy or captive portal returning HTML must not be pasted into
+        // the UI wholesale.
+        assert_eq!(extract_error_message("<html><body>502</body></html>"), None);
+        assert_eq!(extract_error_message(""), None);
+    }
+
+    #[test]
+    fn falls_back_to_none_when_the_shape_is_unexpected() {
+        assert_eq!(extract_error_message(r#"{"error":"a string"}"#), None);
+        assert_eq!(extract_error_message(r#"{"error":{"message":"   "}}"#), None);
+        assert_eq!(extract_error_message(r#"{"detail":"nope"}"#), None);
+    }
+
+    #[test]
+    fn a_pasted_key_is_trimmed_so_the_header_can_be_built() {
+        // A trailing newline from a paste makes reqwest refuse to build the
+        // header, which surfaced as an unexplained "could not connect".
+        let provider = AnthropicProvider::new("https://api.anthropic.com", "  sk-ant-api-1\n");
+        assert_eq!(
+            provider.auth,
+            AnthropicAuth::ApiKey("sk-ant-api-1".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pasted_base_url_is_trimmed_of_space_and_trailing_slashes() {
+        let provider = AnthropicProvider::new("  https://api.anthropic.com/  ", "k");
+        assert_eq!(provider.base_url, "https://api.anthropic.com");
     }
 }

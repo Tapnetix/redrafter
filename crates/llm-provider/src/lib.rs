@@ -6,7 +6,7 @@ pub mod openai_compat;
 pub mod provider;
 pub mod request;
 
-pub use anthropic::AnthropicProvider;
+pub use anthropic::{AnthropicAuth, AnthropicProvider};
 pub use discover::{discover, DiscoveryResult};
 pub use gemini::GeminiProvider;
 pub use ollama::OllamaProvider;

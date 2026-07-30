@@ -575,14 +575,17 @@ pub fn connection_remove(
 /// screen show a pass/fail result before the user commits to saving a
 /// connection (or to confirm a saved one is still reachable).
 pub async fn connection_test_impl(provider: &dyn LlmProvider, base_url: &str) -> Result<(), String> {
-    if provider.is_available().await {
-        Ok(())
-    } else {
-        Err(format!(
-            "could not connect to {} at {base_url}",
+    // `availability` rather than `is_available`: the latter answers only
+    // yes/no, so an invalid key, an out-of-credit account and an unreachable
+    // host all rendered as the same "could not connect to anthropic at
+    // https://api.anthropic.com" — which is what a user hits when they paste
+    // a key that doesn't work and have no way to find out why.
+    provider.availability().await.map_err(|reason| {
+        format!(
+            "could not connect to {} at {base_url} — {reason}",
             provider.provider_name()
-        ))
-    }
+        )
+    })
 }
 
 /// Tauri command wrapping [`connection_test_impl`]; builds the provider via
