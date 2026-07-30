@@ -42,6 +42,41 @@ body {
   background: var(--primary);
 }
 
+/* `.switch` draws its on/off state from `input:checked + .track`, which only
+   works for the `<label><input type=checkbox><span class=track>` form
+   (Connections' per-connection enable toggle). General's "Start redrafter at
+   login" is a `<button role="switch" aria-checked>` with no `<input>` at all,
+   so the knob never moved however many times it was pressed — even though the
+   click did fire `tray_set_launch_login` and macOS really did register the
+   login item. Drive the same visual off `aria-checked`, and reset the button
+   chrome that would otherwise fight `.switch`'s fixed 38x22 geometry. */
+.switch[role='switch'] {
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.switch[role='switch'][aria-checked='true'] .track {
+  background: var(--primary);
+}
+
+.switch[role='switch'][aria-checked='true'] .track::before {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.switch[role='switch']:focus-visible {
+  outline: none;
+}
+
+.switch[role='switch']:focus-visible .track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* The connection row packs a name/URL block plus Test / Refresh models / Edit
    / enable controls into one non-wrapping flex row. At the app window's
    shipped 480px width the buttons overlapped the base-URL text. Allow the row

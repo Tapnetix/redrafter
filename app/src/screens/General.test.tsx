@@ -125,6 +125,43 @@ describe('General', () => {
     await waitFor(() => expect(mockedIpc.getPermissionStatus).toHaveBeenCalledTimes(2));
   });
 
+  // Regression: `chooseTheme` called the local `useState` setter — which
+  // happens to share its name with `theme.ts`'s `setTheme` — so it repainted
+  // the segmented button and persisted the key but never toggled the `light`
+  // class. Picking a theme changed nothing visible until the app restarted.
+  // The pre-existing test below asserts the persist + the `.active` class, and
+  // passed the whole time; only the applied class catches this.
+  it('actually applies the chosen theme to <html>, not just the button state', async () => {
+    document.documentElement.classList.remove('light');
+    render(<General />);
+    await waitFor(() => expect(mockedIpc.getPermissionStatus).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByTestId('theme-light'));
+
+    await waitFor(() => expect(document.documentElement.classList.contains('light')).toBe(true));
+  });
+
+  it('removes the light class again when switching back to dark', async () => {
+    document.documentElement.classList.add('light');
+    render(<General />);
+    await waitFor(() => expect(mockedIpc.getPermissionStatus).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByTestId('theme-dark'));
+
+    await waitFor(() => expect(document.documentElement.classList.contains('light')).toBe(false));
+  });
+
+  // Regression: this was a <button> with no onClick — it invited a click and
+  // did nothing. There is nowhere for it to go, so it must not look actionable.
+  it('renders the menu-bar row as information, not a dead button', async () => {
+    render(<General />);
+    await waitFor(() => expect(mockedIpc.getPermissionStatus).toHaveBeenCalled());
+
+    const row = screen.getByTestId('general-tray-link');
+    expect(row.tagName).not.toBe('BUTTON');
+    expect(row).toHaveTextContent(/Refine selection/);
+  });
+
   it('persists the chosen theme via settingsSet and marks it active', async () => {
     render(<General />);
 

@@ -22,6 +22,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { getPermissionStatus, hotkeySet, setLaunchAtLogin, settingsGet, settingsSet } from '@/lib/ipc';
 import { NO_MODEL_LABEL, useModelStore } from '@/lib/model-store';
+// `applyAndPersistTheme` is `theme.ts`'s `setTheme` — aliased because the
+// local `useState` setter below is also called `setTheme`, and that shadowing
+// is exactly what broke the Appearance control: `chooseTheme` called the state
+// setter (which only repaints the segmented button) and never the one that
+// toggles the `light` class on <html>, so picking a theme changed nothing
+// visible until the app was restarted.
+import { setTheme as applyAndPersistTheme } from '@/lib/theme';
 
 const HOTKEY_SETTINGS_KEY = 'hotkey_combo';
 const THEME_SETTINGS_KEY = 'theme';
@@ -99,7 +106,7 @@ export default function General({ onNavigateToModels }: GeneralProps = {}) {
   const modelStore = useModelStore();
   const [permissionGranted, setPermissionGranted] = useState<boolean | null>(null);
   const [hotkeyCombo, setHotkeyCombo] = useState<string>(DEFAULT_HOTKEY_COMBO);
-  const [theme, setTheme] = useState<Theme>('system');
+  const [theme, setThemeChoice] = useState<Theme>('system');
   const [launchAtLogin, setLaunchAtLoginState] = useState(true);
 
   const [hotkeyDialogOpen, setHotkeyDialogOpen] = useState(false);
@@ -122,7 +129,7 @@ export default function General({ onNavigateToModels }: GeneralProps = {}) {
     settingsGet(THEME_SETTINGS_KEY)
       .then((value) => {
         if (value === 'dark' || value === 'light' || value === 'system') {
-          setTheme(value);
+          setThemeChoice(value);
         }
       })
       .catch(() => {});
@@ -139,8 +146,12 @@ export default function General({ onNavigateToModels }: GeneralProps = {}) {
   }, [hotkeyDialogOpen]);
 
   const chooseTheme = (next: Theme) => {
-    setTheme(next);
-    settingsSet(THEME_SETTINGS_KEY, next).catch(() => {});
+    setThemeChoice(next);
+    // Applies the `light` class to <html> *and* persists the same
+    // `settings_set('theme', …)` this used to do by hand — one call, and the
+    // appearance actually changes. Same path the nav rail's moon toggle uses,
+    // which is why that one always worked while this control didn't.
+    void applyAndPersistTheme(next);
   };
 
   const toggleLaunchAtLogin = () => {
@@ -262,12 +273,23 @@ export default function General({ onNavigateToModels }: GeneralProps = {}) {
               </button>
             </div>
           </div>
-          <button className="opt" data-testid="general-tray-link" style={{ color: 'inherit', textAlign: 'left' }}>
+          {/* Informational, not a control: this used to be a <button> with no
+              onClick, so it looked like something that should do something and
+              never did. There is nowhere for it to navigate — the menu bar is
+              an OS surface, not a settings section — so it now reads as the
+              status row it always was, and actually says what the icon does. */}
+          <div className="opt" data-testid="general-tray-link">
             <div className="opt__main">
               <div className="opt__name">Menu-bar icon</div>
-              <div className="opt__desc">redrafter lives in your menu bar — see the icon states and dropdown.</div>
+              <div className="opt__desc">
+                redrafter runs from the menu bar rather than the Dock. Click its icon for{' '}
+                <strong>Refine selection</strong>, <strong>Manage models…</strong>,{' '}
+                <strong>Settings…</strong>, <strong>History…</strong>, <strong>Pause capturing</strong>,{' '}
+                and <strong>Quit</strong>. Closing this window hides it back to the menu bar — it
+                doesn&apos;t quit redrafter.
+              </div>
             </div>
-          </button>
+          </div>
         </div>
       </section>
 
