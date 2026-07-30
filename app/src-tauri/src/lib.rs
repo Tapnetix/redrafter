@@ -34,6 +34,7 @@ pub mod connections;
 pub mod external;
 pub mod feedback;
 pub mod history;
+pub mod hud;
 pub mod hotkey;
 pub mod lifecycle;
 pub mod models;
@@ -582,15 +583,18 @@ impl TrayStatusSink for SystemTrayStatus {
             RefineStatus::Refining => {
                 tray::set_status_message(app, "Refining…");
                 tray::set_busy_icon(app, true);
+                hud::show(app);
             }
             // Restore the resting Ready/Paused tooltip rather than leaving a
             // transient "idle" string on it.
             RefineStatus::Idle => {
                 tray::set_busy_icon(app, false);
+                hud::hide(app);
                 tray::refresh_tray(app);
             }
             RefineStatus::Error => {
                 tray::set_busy_icon(app, false);
+                hud::hide(app);
                 tray::set_status_message(app, "Refine failed");
             }
         }
@@ -975,6 +979,11 @@ pub fn run() {
             if let Err(e) = tray::setup_tray(&handle) {
                 eprintln!("[tray] failed to set up tray: {e}");
             }
+
+            // Built once, hidden, so showing it during a refine never has to
+            // create a window (which risks activating the app) or paint an
+            // unloaded webview. Failures are logged inside `create`.
+            hud::create(&handle);
 
             Ok(())
         })
