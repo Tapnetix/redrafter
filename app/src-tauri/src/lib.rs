@@ -29,6 +29,7 @@
 //!     through -- now no-ops with [`PAUSED_ERROR`] while `tray_pause` has
 //!     paused capturing.
 
+pub mod claude_code;
 pub mod command_parser;
 pub mod connections;
 pub mod external;
@@ -59,6 +60,7 @@ use connections::{
     connection_add, connection_edit, connection_list, connection_refresh_models,
     connection_remove, connection_test, model_add_manual, resolve_api_key, ConnectionStore,
 };
+use claude_code::{claude_code_connect, claude_code_status};
 use external::open_external;
 use feedback::{feedback_config_get, feedback_config_set, FeedbackCue};
 use history::{
@@ -204,8 +206,14 @@ fn build_provider(
     connection: &connections::Connection,
     model: String,
 ) -> Result<(Arc<dyn llm_provider::LlmProvider>, String), String> {
-    let api_key =
-        resolve_api_key(connections, secrets, &connection.id).map_err(|e| e.to_string())?;
+    // A Claude Code connection stores no secret of its own: the token is read
+    // (and validated) straight from Claude Code's store on every call, so it
+    // is never copied into ours and cannot go stale behind our back.
+    let api_key = if connection.provider_kind == claude_code::PROVIDER_KIND {
+        claude_code::access_token()?
+    } else {
+        resolve_api_key(connections, secrets, &connection.id).map_err(|e| e.to_string())?
+    };
     let provider =
         connections::provider_for(&connection.provider_kind, &connection.base_url, &api_key);
     Ok((Arc::from(provider), model))
@@ -893,6 +901,9 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         // Opening provider console links in the real browser -- a plain
         // `target="_blank"` anchor is inert inside a webview.
         open_external,
+        // Refining through the Claude Code login instead of a Console key.
+        claude_code_status,
+        claude_code_connect,
     ]
 }
 

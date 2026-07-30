@@ -19,6 +19,8 @@
 //     `hotkey-change` pattern until then.
 import { useEffect, useState } from 'react';
 import {
+  claudeCodeConnect,
+  claudeCodeStatus,
   connectionAdd,
   connectionEdit,
   connectionList,
@@ -27,6 +29,7 @@ import {
   connectionTest,
   modelAddManual,
   openExternal,
+  type ClaudeCodeSummary,
   secretsSet,
   type Connection,
   type KeyStorageLocation,
@@ -86,7 +89,20 @@ const PROVIDER_TYPES: ProviderTypeInfo[] = [
   },
 ];
 
-function providerInfo(id: string): ProviderTypeInfo {
+/** The Claude Code login. Not in PROVIDER_TYPES because it isn't something
+ * you pick from the dropdown and hand a key to — it's added by its own button
+ * — but the connection list still needs a label for it, and the unqualified
+ * fallback below would otherwise call it "Anthropic". */
+const CLAUDE_CODE_TYPE: ProviderTypeInfo = {
+  id: 'claude-code',
+  label: 'Claude Code login',
+  baseUrl: 'https://api.anthropic.com',
+  keyUrl: '',
+  needsKey: false,
+};
+
+export function providerInfo(id: string): ProviderTypeInfo {
+  if (id === CLAUDE_CODE_TYPE.id) return CLAUDE_CODE_TYPE;
   return PROVIDER_TYPES.find((p) => p.id === id) ?? PROVIDER_TYPES[0];
 }
 
@@ -105,6 +121,11 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
   const [lastEnabledByConn, setLastEnabledByConn] = useState<Record<string, string[]>>({});
 
   const [rowRefreshed, setRowRefreshed] = useState<Record<string, string>>({});
+  // The Claude Code shortcut is offered only when it would actually work, so
+  // the button can't promise something the credential can't deliver.
+  const [claudeCode, setClaudeCode] = useState<ClaudeCodeSummary | null>(null);
+  const [claudeCodeReason, setClaudeCodeReason] = useState('');
+  const [claudeCodeBusy, setClaudeCodeBusy] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>('add');
@@ -135,7 +156,35 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
 
   useEffect(() => {
     loadConnections();
+    claudeCodeStatus()
+      .then((summary) => {
+        setClaudeCode(summary);
+        setClaudeCodeReason('');
+      })
+      .catch((err) => {
+        setClaudeCode(null);
+        setClaudeCodeReason(errorText(err));
+      });
   }, []);
+
+  /** Adds the connection that refines through the Claude Code login. */
+  async function useClaudeCodeLogin() {
+    setClaudeCodeBusy(true);
+    setSheetError('');
+    try {
+      const connection = await claudeCodeConnect();
+      updateConnectionInList(connection);
+      setSavedConnection(connection);
+      setModalMode('edit');
+      setProviderType(connection.providerKind);
+      setBaseUrl(connection.baseUrl);
+      setSaveState('saved');
+    } catch (err) {
+      setSheetError(errorText(err));
+    } finally {
+      setClaudeCodeBusy(false);
+    }
+  }
 
   function updateConnectionInList(updated: Connection) {
     setConnections((prev) => {
@@ -566,6 +615,35 @@ export default function Connections({ onNavigateToModels }: ConnectionsProps) {
             <h2 className="modal__title">
               {modalMode === 'add' && !isEditingSaved ? 'Add connection' : 'Edit connection'}
             </h2>
+
+            {!isEditingSaved && (claudeCode || claudeCodeReason) && (
+              <div className="grp" style={{ padding: 12, marginBottom: 14 }} data-testid="claude-code-block">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div className="opt__main">
+                    <div className="opt__name">Use your Claude Code login</div>
+                    <div className="opt__desc">
+                      {claudeCode
+                        ? `Refine through the Claude account you're already signed into${
+                            claudeCode.subscriptionType ? ` (${claudeCode.subscriptionType})` : ''
+                          } — no API key needed.`
+                        : claudeCodeReason}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn--sm"
+                    data-testid="conn-use-claude-code"
+                    onClick={useClaudeCodeLogin}
+                    disabled={!claudeCode || claudeCodeBusy}
+                  >
+                    {claudeCodeBusy ? 'Connecting…' : 'Use it'}
+                  </button>
+                </div>
+                <p className="muted tiny" style={{ margin: '8px 0 0' }}>
+                  Shares your subscription&apos;s rate limit with Claude Code itself. Or enter an
+                  API key below.
+                </p>
+              </div>
+            )}
 
             <div className="field">
               <label htmlFor="conn-provider-type">Provider type</label>

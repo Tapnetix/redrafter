@@ -68,6 +68,9 @@ const COMMANDS: &[&str] = &[
     "feedback_config_set",
     // Opening provider console links in the real browser
     "open_external",
+    // Refining through the Claude Code login
+    "claude_code_status",
+    "claude_code_connect",
 ];
 
 fn main() {

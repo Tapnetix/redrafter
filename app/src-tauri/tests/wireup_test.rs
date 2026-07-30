@@ -96,6 +96,9 @@ const EXPECTED_COMMANDS: &[&str] = &[
     "feedback_config_set",
     // Opening provider console links in the real browser
     "open_external",
+    // Refining through the Claude Code login
+    "claude_code_status",
+    "claude_code_connect",
 ];
 
 fn build_test_app() -> tauri::App<tauri::test::MockRuntime> {

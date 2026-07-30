@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-claude-code-status"
+description = "Enables the claude_code_status command without any pre-configured scope."
+commands.allow = ["claude_code_status"]
+
+[[permission]]
+identifier = "deny-claude-code-status"
+description = "Denies the claude_code_status command without any pre-configured scope."
+commands.deny = ["claude_code_status"]

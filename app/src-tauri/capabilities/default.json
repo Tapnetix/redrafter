@@ -56,6 +56,8 @@
     "allow-history-clear",
     "allow-feedback-config-get",
     "allow-feedback-config-set",
-    "allow-open-external"
+    "allow-open-external",
+    "allow-claude-code-status",
+    "allow-claude-code-connect"
   ]
 }

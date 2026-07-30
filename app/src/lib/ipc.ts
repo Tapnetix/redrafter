@@ -293,6 +293,35 @@ export function permissionOpenSettings(): Promise<void> {
   return invoke('permission_open_settings');
 }
 
+// ── Claude Code login (opt-in alternative to a Console API key) ──
+/** What `claudeCodeStatus` reports about the signed-in Claude Code account. */
+export interface ClaudeCodeSummary {
+  /** e.g. "max" / "pro", so the user can confirm which account. */
+  subscriptionType?: string | null;
+  /** Whether the credential is permitted to run inference. */
+  canInfer: boolean;
+}
+
+/**
+ * Reports whether a usable Claude Code login exists on this machine, so the
+ * Connections screen can offer the shortcut only when it would work. Rejects
+ * with an actionable reason (not signed in / expired / not permitted to run
+ * inference) rather than a bare false.
+ */
+export function claudeCodeStatus(): Promise<ClaudeCodeSummary> {
+  return invoke<ClaudeCodeSummary>('claude_code_status');
+}
+
+/**
+ * Adds (or refreshes) the connection that refines through the Claude Code
+ * login. No token is copied into redrafter's own store — the connection just
+ * records that it authenticates this way, and the credential is read from
+ * Claude Code per call.
+ */
+export function claudeCodeConnect(): Promise<Connection> {
+  return invoke<Connection>('claude_code_connect');
+}
+
 // ── External links ──
 /**
  * Opens `url` in the user's real browser. A plain

@@ -14,6 +14,8 @@ vi.mock('@/lib/ipc', () => ({
   modelAddManual: vi.fn(),
   secretsSet: vi.fn(),
   openExternal: vi.fn(),
+  claudeCodeStatus: vi.fn(),
+  claudeCodeConnect: vi.fn(),
 }));
 
 const mockedIpc = vi.mocked(ipc);
@@ -37,6 +39,9 @@ describe('Connections', () => {
     mockedIpc.connectionTest.mockResolvedValue(undefined);
     mockedIpc.secretsSet.mockResolvedValue(undefined);
     mockedIpc.openExternal.mockResolvedValue(undefined);
+    // No Claude Code login by default, so the existing specs see the plain
+    // key-entry sheet they were written against.
+    mockedIpc.claudeCodeStatus.mockRejectedValue(new Error('no Claude Code login found'));
   });
 
   it('shows the empty state with no connections and opens the add sheet from its CTA', async () => {
@@ -437,5 +442,84 @@ describe('Connections', () => {
     await waitFor(() =>
       expect(mockedIpc.connectionEdit).toHaveBeenCalledWith({ id: '1', baseUrl: 'https://proxy.example.com' }),
     );
+  });
+});
+
+// ── The Claude Code login shortcut ───────────────────────────────────────────
+describe('Claude Code login', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockedIpc.connectionList.mockResolvedValue([]);
+    mockedIpc.connectionTest.mockResolvedValue(undefined);
+    mockedIpc.secretsSet.mockResolvedValue(undefined);
+    mockedIpc.openExternal.mockResolvedValue(undefined);
+  });
+
+  const claudeCodeConnection: Connection = {
+    id: '9',
+    providerKind: 'claude-code',
+    baseUrl: 'https://api.anthropic.com',
+    enabledModels: ['claude-opus-5'],
+    availableModels: ['claude-opus-5'],
+    keyRef: null,
+  };
+
+  it('offers the shortcut when a usable Claude Code login exists', async () => {
+    mockedIpc.claudeCodeStatus.mockResolvedValue({ subscriptionType: 'max', canInfer: true });
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    expect(await screen.findByTestId('conn-use-claude-code')).toBeEnabled();
+    expect(screen.getByTestId('claude-code-block')).toHaveTextContent(/max/);
+  });
+
+  it('adds the connection without ever handling a key', async () => {
+    mockedIpc.claudeCodeStatus.mockResolvedValue({ subscriptionType: 'max', canInfer: true });
+    mockedIpc.claudeCodeConnect.mockResolvedValue(claudeCodeConnection);
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.click(await screen.findByTestId('conn-use-claude-code'));
+
+    await waitFor(() => expect(mockedIpc.claudeCodeConnect).toHaveBeenCalledTimes(1));
+    // No key was collected or sent anywhere.
+    expect(mockedIpc.connectionAdd).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('connection-save-ok')).toBeInTheDocument();
+  });
+
+  it('explains why instead of offering a button that would fail', async () => {
+    mockedIpc.claudeCodeStatus.mockRejectedValue(
+      new Error('your Claude Code login has expired — run any `claude` command to refresh it'),
+    );
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    expect(await screen.findByTestId('claude-code-block')).toHaveTextContent(/expired/);
+    expect(screen.getByTestId('conn-use-claude-code')).toBeDisabled();
+  });
+
+  it('surfaces a failure from the import itself', async () => {
+    mockedIpc.claudeCodeStatus.mockResolvedValue({ subscriptionType: 'max', canInfer: true });
+    mockedIpc.claudeCodeConnect.mockRejectedValue(new Error('no Claude Code login found'));
+    render(<Connections />);
+    await screen.findByTestId('connections-empty');
+    fireEvent.click(screen.getByTestId('connections-empty-cta'));
+
+    fireEvent.click(await screen.findByTestId('conn-use-claude-code'));
+
+    expect(await screen.findByTestId('conn-sheet-error')).toHaveTextContent('no Claude Code login found');
+  });
+
+  it('labels a claude-code connection as the Claude Code login, not Anthropic', async () => {
+    mockedIpc.claudeCodeStatus.mockResolvedValue({ subscriptionType: 'max', canInfer: true });
+    mockedIpc.connectionList.mockResolvedValue([claudeCodeConnection]);
+    render(<Connections />);
+
+    const row = await screen.findByTestId('connection-row-claude-code');
+    expect(row).toHaveTextContent('Claude Code login');
+    expect(row).not.toHaveTextContent('Anthropic');
   });
 });

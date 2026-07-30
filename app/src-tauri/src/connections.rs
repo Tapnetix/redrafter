@@ -379,6 +379,15 @@ pub async fn connect_and_store(
 pub fn provider_for(provider_kind: &str, base_url: &str, api_key: &str) -> Box<dyn LlmProvider> {
     match provider_kind {
         "ollama" => Box::new(OllamaProvider::new(base_url)),
+        // The Claude Code login: same Messages API, but its OAuth token
+        // authenticates as `Authorization: Bearer` rather than `x-api-key`
+        // (the latter is rejected 401). `api_key` here carries that token,
+        // resolved fresh from Claude Code's own store at call time rather
+        // than copied into ours -- see `claude_code.rs`.
+        "claude-code" => Box::new(AnthropicProvider::with_auth(
+            base_url,
+            llm_provider::AnthropicAuth::OAuth(api_key.to_string()),
+        )),
         "anthropic" => Box::new(AnthropicProvider::new(base_url, api_key)),
         "gemini" => Box::new(GeminiProvider::new(base_url, api_key)),
         _ => Box::new(OpenAiCompatProvider::new(base_url, api_key)),
