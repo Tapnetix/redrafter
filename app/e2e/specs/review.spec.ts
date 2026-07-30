@@ -65,14 +65,23 @@ test.describe('Review panel', () => {
     expect((await mockCalls(page)).map((c) => c.cmd)).not.toContain('review_accept');
   });
 
-  test('Escape discards and Cmd+Enter inserts', async ({ page }) => {
+  // Split rather than reloading mid-test: a reload races the mock's call log
+  // and the panel's key listener, which made this flaky under parallel load.
+  test('Escape discards', async ({ page }) => {
     await page.goto('/review');
-    await page.keyboard.press('Escape');
-    await expect.poll(async () => (await mockCalls(page)).map((c) => c.cmd)).toContain('review_discard');
-
-    await page.reload();
     await page.getByTestId('review-refined').waitFor();
+
+    await page.keyboard.press('Escape');
+
+    await expect.poll(async () => (await mockCalls(page)).map((c) => c.cmd)).toContain('review_discard');
+  });
+
+  test('Cmd+Enter inserts', async ({ page }) => {
+    await page.goto('/review');
+    await page.getByTestId('review-refined').waitFor();
+
     await page.keyboard.press('ControlOrMeta+Enter');
+
     await expect.poll(async () => (await mockCalls(page)).map((c) => c.cmd)).toContain('review_accept');
   });
 });

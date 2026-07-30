@@ -52,7 +52,7 @@ test.describe('History restore and re-refine (S15)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await expect(page.getByTestId('history-list')).toBeVisible();
 
     const rows = page.getByTestId('history-row');
@@ -72,7 +72,7 @@ test.describe('History restore and re-refine (S15)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     const rows = page.getByTestId('history-row');
     await expect(rows).toHaveCount(2);
 

@@ -45,7 +45,7 @@ test.describe('History search (S32)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await expect(page.getByTestId('history-row')).toHaveCount(2);
 
     await page.getByTestId('history-search').fill('release plan');
@@ -59,7 +59,7 @@ test.describe('History search (S32)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await page.getByTestId('history-search').fill('release plan');
     await expect(page.getByTestId('history-row')).toHaveCount(1);
 
@@ -72,7 +72,7 @@ test.describe('History search (S32)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await expect(page.getByTestId('history-row')).toHaveCount(2);
 
     await page.getByTestId('history-search').fill('nothing in history matches this term');

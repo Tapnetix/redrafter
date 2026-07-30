@@ -30,7 +30,16 @@ impl ChatMessage {
 pub struct LlmRequest {
     pub messages: Vec<ChatMessage>,
     pub model: String,
-    pub temperature: f32,
+    /// Sampling temperature, omitted from the wire when `None`.
+    ///
+    /// Optional because Anthropic has **deprecated `temperature` on its newer
+    /// models** and rejects the whole request with
+    /// `400 invalid_request_error: \`temperature\` is deprecated for this
+    /// model.` — so sending a default unconditionally made every refine on
+    /// e.g. claude-sonnet-5 fail outright. Left unset, each provider applies
+    /// its own default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
 }
 
@@ -62,7 +71,7 @@ mod tests {
         let request = LlmRequest {
             messages: vec![ChatMessage::system("Be concise."), ChatMessage::user("Hi")],
             model: "gpt-4o-mini".to_string(),
-            temperature: 0.7,
+            temperature: Some(0.7),
             max_tokens: Some(100),
         };
 

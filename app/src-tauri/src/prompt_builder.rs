@@ -42,7 +42,10 @@ pub enum QuoteMode {
 }
 
 /// Options controlling how a refine prompt is assembled.
-#[derive(Debug, Clone)]
+///
+/// `Default` is derived: every field's default is its type's, now that
+/// `temperature` defaults to `None` (unset) rather than a fixed 0.3.
+#[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     /// The refine direction/system instructions. `None` falls back to
     /// [`DEFAULT_DIRECTION`]. Set from an explicit `/rd` tag (or, once
@@ -53,7 +56,10 @@ pub struct BuildOptions {
     /// The model identifier to request (the active model from
     /// `llm-provider`/settings).
     pub model: String,
-    pub temperature: f32,
+    /// Sampling temperature. `None` (the default) sends none at all —
+    /// Anthropic deprecated the parameter on its newer models and rejects the
+    /// request outright, which broke every refine on those models.
+    pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     /// Quoted context to present to the model as reference material only
     /// — never rewritten, never echoed back in the reply. Set from an
@@ -71,19 +77,6 @@ pub struct BuildOptions {
     pub quote_mode: QuoteMode,
 }
 
-impl Default for BuildOptions {
-    fn default() -> Self {
-        Self {
-            direction: None,
-            model: String::new(),
-            temperature: 0.3,
-            max_tokens: None,
-            quote: None,
-            lang: None,
-            quote_mode: QuoteMode::default(),
-        }
-    }
-}
 
 /// Assembles a system+user [`LlmRequest`] from `opts` and the user's
 /// draft (`input`) — the text to actually refine, with any quoted context

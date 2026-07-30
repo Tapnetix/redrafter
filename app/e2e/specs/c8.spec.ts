@@ -41,7 +41,7 @@ test.describe('Built-in preset override warning (S14)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-presets').click();
+    await page.getByTestId('nav-presets').click();
     await expect(page.getByTestId('presets-screen')).toBeVisible();
 
     await page.getByTestId('preset-item-formal').click();

@@ -46,6 +46,26 @@ img.setup__logo {
   object-fit: contain;
 }
 
+/* Above the sidebar's breakpoint the shell showed *two* complete navigations
+   side by side: the icon rail and a sidebar listing the very same six
+   sections, one as icons and one as icons with labels. Widening the window
+   made the duplication obvious and unpolished. Wherever the sidebar is shown
+   it is the better navigation — it has labels and the active-model footer —
+   so the rail steps aside and the grid drops its column. Below the breakpoint
+   the sidebar is `display: none` (wireframe app.css) and the rail is the only
+   navigation, unchanged. The theme toggle moved to the topbar so it survives
+   either way. */
+@media (min-width: 861px) {
+  .rail {
+    display: none;
+  }
+
+  .app,
+  .app.no-sidebar {
+    grid-template-columns: var(--sidebar-w) 1fr;
+  }
+}
+
 /* The Models screen's active-model picker (`model-active-radio-*`) puts
    `role="radio"`/`aria-checked` on the `.radio-mark` button itself, inside a
    table row. The wireframe only styles the checked dot via an ancestor

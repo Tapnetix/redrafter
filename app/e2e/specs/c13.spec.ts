@@ -46,7 +46,7 @@ test.describe('History detail view (S31)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await expect(page.getByTestId('history-row')).toBeVisible();
 
     await page.getByTestId('history-view').click();
@@ -66,7 +66,7 @@ test.describe('History detail view (S31)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await page.getByTestId('history-view').click();
     await expect(page.getByTestId('history-detail')).toBeVisible();
 
@@ -79,7 +79,7 @@ test.describe('History detail view (S31)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await page.getByTestId('history-view').click();
     await expect(page.getByTestId('history-detail')).toBeVisible();
 

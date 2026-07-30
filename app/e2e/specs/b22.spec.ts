@@ -48,7 +48,7 @@ test.describe('Ollama model pull (S27)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-models').click();
+    await page.getByTestId('nav-models').click();
     await expect(page.getByTestId('models-table')).toBeVisible();
 
     // Not yet discovered/available anywhere: pulling it is the only way it
@@ -78,7 +78,7 @@ test.describe('Ollama model pull (S27)', () => {
     // without being auto-enabled (B1's `ollama_pull` only refreshes
     // availability; enabling still happens explicitly, same as any other
     // discovered model).
-    await page.getByTestId('rail-connections').click();
+    await page.getByTestId('nav-connections').click();
     await page.getByTestId('connection-edit-ollama').click();
     const phi4Check = page.getByTestId('conn-model-check-phi4');
     await expect(phi4Check).toBeVisible();

@@ -51,7 +51,7 @@ test.describe('History clear-all (S33)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await expect(page.getByTestId('history-row')).toHaveCount(2);
 
     await page.getByTestId('history-clear').click();
@@ -65,7 +65,7 @@ test.describe('History clear-all (S33)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await page.getByTestId('history-clear').click();
     await expect(page.getByTestId('history-clear-modal')).toBeVisible();
 
@@ -79,7 +79,7 @@ test.describe('History clear-all (S33)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await page.getByTestId('history-clear').click();
     await expect(page.getByTestId('history-clear-modal')).toBeVisible();
 

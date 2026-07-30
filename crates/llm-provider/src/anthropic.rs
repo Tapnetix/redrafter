@@ -20,7 +20,8 @@ struct AnthropicChatRequest {
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     max_tokens: u32,
 }
 
@@ -242,11 +243,21 @@ impl LlmProvider for AnthropicProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            bail!(
-                "Anthropic endpoint returned HTTP {}: {}",
-                status.as_u16(),
-                body
-            );
+            // Report the API's own message, not the raw envelope. The whole
+            // body ({"type":"error","error":{...},"request_id":...}) is far
+            // too long for the failure chip, so the user saw the first couple
+            // of words and nothing that told them what to change.
+            let mut reason = match extract_error_message(&body) {
+                Some(message) => format!("HTTP {}: {message}", status.as_u16()),
+                None => format!("HTTP {}: {body}", status.as_u16()),
+            };
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                if let Some(hint) = credential_hint(&self.auth) {
+                    reason.push_str(" — ");
+                    reason.push_str(hint);
+                }
+            }
+            bail!("Anthropic {reason}");
         }
 
         let parsed: AnthropicChatResponse = response
@@ -470,5 +481,60 @@ mod credential_hint_tests {
             credential_hint(&AnthropicAuth::OAuth("sk-ant-oat01-x".to_string())),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod temperature_tests {
+    use super::*;
+    use crate::request::{ChatMessage, LlmRequest};
+
+    fn request(temperature: Option<f32>) -> LlmRequest {
+        LlmRequest {
+            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            model: "claude-sonnet-5".into(),
+            temperature,
+            max_tokens: Some(64),
+        }
+    }
+
+    fn body_json(request: &LlmRequest) -> serde_json::Value {
+        let (system, messages) = split_system_and_messages(&request.messages);
+        serde_json::to_value(AnthropicChatRequest {
+            model: request.model.clone(),
+            max_tokens: request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            temperature: request.temperature,
+            system,
+            messages,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn temperature_is_omitted_entirely_when_unset() {
+        // Anthropic rejects the whole request with 400 "`temperature` is
+        // deprecated for this model." on its newer models, so an unconditional
+        // default made every refine on them fail.
+        let json = body_json(&request(None));
+        assert!(
+            json.get("temperature").is_none(),
+            "temperature must not appear at all: {json}"
+        );
+    }
+
+    #[test]
+    fn an_explicit_temperature_is_still_sent() {
+        let json = body_json(&request(Some(0.3)));
+        let sent = json["temperature"].as_f64().expect("temperature should be present");
+        // f32 -> JSON widens to 0.30000001192092896; compare with tolerance.
+        assert!((sent - 0.3).abs() < 1e-6, "got {sent}");
+    }
+
+    #[test]
+    fn the_rest_of_the_body_is_unaffected() {
+        let json = body_json(&request(None));
+        assert_eq!(json["model"], "claude-sonnet-5");
+        assert_eq!(json["max_tokens"], 64);
+        assert_eq!(json["messages"][0]["content"], "hi");
     }
 }

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import NavRail, { RAIL_ITEMS } from './NavRail';
@@ -29,9 +29,11 @@ describe('NavRail', () => {
     }
   });
 
-  it('renders the theme-toggle control', () => {
+  it('no longer carries the theme toggle', () => {
+    // It moved to the topbar (see ThemeToggle.test.tsx): the rail is hidden
+    // whenever the sidebar is shown, and the toggle has to survive that.
     render(<NavRail active="general" onNavigate={() => {}} />);
-    expect(screen.getByTestId('theme-toggle')).toBeInTheDocument();
+    expect(screen.queryByTestId('theme-toggle')).not.toBeInTheDocument();
   });
 
   it('marks the active section button as active', () => {
@@ -56,14 +58,4 @@ describe('NavRail', () => {
     expect(onNavigate).toHaveBeenCalledWith('general');
   });
 
-  it('toggling the theme persists it via settings_set', async () => {
-    render(<NavRail active="general" onNavigate={() => {}} />);
-
-    fireEvent.click(screen.getByTestId('theme-toggle'));
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('settings_set', { key: 'theme', value: 'light' });
-    });
-    expect(document.documentElement.classList.contains('light')).toBe(true);
-  });
 });

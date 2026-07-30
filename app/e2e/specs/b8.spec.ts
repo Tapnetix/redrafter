@@ -44,7 +44,7 @@ test.describe('Model curation and active selection (S8)', () => {
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
     // Enable the already-discovered claude-sonnet-4-6 from Connections.
-    await page.getByTestId('rail-connections').click();
+    await page.getByTestId('nav-connections').click();
     await page.getByTestId('connection-edit-anthropic').click();
     const sonnetCheck = page.getByTestId('conn-model-check-claude-sonnet-4-6');
     await expect(sonnetCheck).not.toBeChecked();

@@ -26,7 +26,8 @@ struct OllamaChatRequest {
 
 #[derive(Debug, Serialize)]
 struct OllamaOptions {
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     num_predict: Option<u32>,
 }

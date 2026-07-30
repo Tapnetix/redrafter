@@ -38,7 +38,7 @@ test.describe('Preset create and save (S13)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-presets').click();
+    await page.getByTestId('nav-presets').click();
     await expect(page.getByTestId('presets-screen')).toBeVisible();
 
     // The 5 shipped built-ins are there from the start; the new preset isn't yet.

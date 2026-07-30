@@ -60,7 +60,8 @@ export default function Sidebar({ active, onNavigate, activeModelLabel }: Sideba
 
   return (
     <aside className="sidebar" aria-label="Settings sections" data-testid="sidebar">
-      <div className="sidebar__head">
+      <div className="sidebar__head" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <img src="/logo.png" alt="" width={22} height={22} draggable={false} style={{ flex: 'none' }} />
         <div className="app-name">
           redraft<span>er</span>
         </div>

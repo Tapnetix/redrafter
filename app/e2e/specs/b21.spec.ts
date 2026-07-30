@@ -41,7 +41,7 @@ test.describe('Disable model and active-unavailable (S26)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-models').click();
+    await page.getByTestId('nav-models').click();
     await expect(page.getByTestId('models-table')).toBeVisible();
 
     const opusRadio = page.getByTestId('model-active-radio-claude-opus-4-6');

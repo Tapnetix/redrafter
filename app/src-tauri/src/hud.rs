@@ -35,6 +35,12 @@ pub const HUD_LABEL: &str = "hud";
 const HUD_WIDTH: f64 = 132.0;
 const HUD_HEIGHT: f64 = 34.0;
 
+/// Logical size while showing a failure. A provider's message ("`temperature`
+/// is deprecated for this model.") needs room: at the in-flight size the user
+/// saw the first two words and nothing else.
+const HUD_ERROR_WIDTH: f64 = 420.0;
+const HUD_ERROR_HEIGHT: f64 = 82.0;
+
 /// Gap between the pointer and the chip, so the chip never sits under the
 /// cursor itself (where it would hide the very text being refined).
 const CURSOR_GAP: f64 = 18.0;
@@ -144,9 +150,17 @@ fn publish<R: Runtime>(app: &tauri::AppHandle<R>, state: HudState) -> u64 {
     generation
 }
 
+/// Resizes the chip for the state it is about to show.
+fn resize<R: Runtime>(app: &tauri::AppHandle<R>, width: f64, height: f64) {
+    if let Some(window) = app.get_webview_window(HUD_LABEL) {
+        let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    }
+}
+
 /// Shows the in-flight chip.
 pub fn show_refining<R: Runtime>(app: &tauri::AppHandle<R>) {
     publish(app, HudState::refining());
+    resize(app, HUD_WIDTH, HUD_HEIGHT);
     show(app);
 }
 
@@ -158,6 +172,7 @@ pub fn show_refining<R: Runtime>(app: &tauri::AppHandle<R>) {
 /// and nothing else — with no way to find out why.
 pub fn show_error<R: Runtime>(app: &tauri::AppHandle<R>, message: &str) {
     let generation = publish(app, HudState::error(message));
+    resize(app, HUD_ERROR_WIDTH, HUD_ERROR_HEIGHT);
     show(app);
 
     let handle = app.clone();
@@ -219,20 +234,32 @@ pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) {
         return;
     };
 
-    let monitor = window
-        .current_monitor()
+    let cursor = app.cursor_position();
+
+    // The monitor *under the pointer*, not the one the window happens to be
+    // on. With a second display left of the primary, the cursor sits at a
+    // negative x while `current_monitor` still reports the primary at +0+0 —
+    // so the chip was clamped back onto the primary screen, i.e. it appeared
+    // on the wrong display entirely.
+    let monitor = cursor
+        .as_ref()
         .ok()
-        .flatten()
+        .and_then(|c| app.monitor_from_point(c.x, c.y).ok().flatten())
+        .or_else(|| window.current_monitor().ok().flatten())
         .or_else(|| window.primary_monitor().ok().flatten());
 
-    match (app.cursor_position(), monitor.as_ref()) {
+    match (cursor, monitor.as_ref()) {
         (Ok(cursor), Some(monitor)) => {
             let pos = monitor.position();
             let size = monitor.size();
             let scale = window.scale_factor().unwrap_or_else(|_| monitor.scale_factor());
+            let (logical_w, logical_h) = match HUD_MESSAGE.lock().unwrap().as_ref() {
+                Some(state) if state.kind == "error" => (HUD_ERROR_WIDTH, HUD_ERROR_HEIGHT),
+                _ => (HUD_WIDTH, HUD_HEIGHT),
+            };
             let (x, y) = position_near_cursor(
                 (cursor.x, cursor.y),
-                (HUD_WIDTH * scale, HUD_HEIGHT * scale),
+                (logical_w * scale, logical_h * scale),
                 Rect {
                     x: pos.x as f64,
                     y: pos.y as f64,

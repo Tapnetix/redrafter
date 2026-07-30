@@ -61,7 +61,7 @@ test.describe('Preset import (S28)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-presets').click();
+    await page.getByTestId('nav-presets').click();
     await expect(page.getByTestId('presets-screen')).toBeVisible();
 
     // Neither the brand-new trigger nor an updated exec-summary is present yet.

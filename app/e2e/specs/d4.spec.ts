@@ -148,7 +148,7 @@ test.describe('S38: cross-platform refine loop and settings flow', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-connections').click();
+    await page.getByTestId('nav-connections').click();
     await page.getByTestId('connections-models-link').click();
     await expect(page.getByTestId('models-table')).toBeVisible();
 

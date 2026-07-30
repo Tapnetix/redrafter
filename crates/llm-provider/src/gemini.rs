@@ -24,7 +24,8 @@ struct GeminiChatRequest {
 
 #[derive(Debug, Serialize)]
 struct GeminiGenerationConfig {
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "maxOutputTokens")]
     max_output_tokens: Option<u32>,

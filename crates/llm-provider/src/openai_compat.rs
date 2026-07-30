@@ -15,7 +15,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 struct OpenAiChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
 }

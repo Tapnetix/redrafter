@@ -16,7 +16,6 @@
 // test.
 
 import type { ReactNode } from 'react';
-import { loadTheme, setTheme, toggledTheme, type Theme } from '@/lib/theme';
 import { SCREENS, type Section } from '@/lib/screens-index';
 
 // Re-exported so the many `import { type Section } from '@/components/NavRail'`
@@ -89,11 +88,6 @@ export interface NavRailProps {
 }
 
 export default function NavRail({ active, onNavigate }: NavRailProps) {
-  const onToggleTheme = async () => {
-    const current: Theme = await loadTheme();
-    await setTheme(toggledTheme(current));
-  };
-
   return (
     <nav className="rail" aria-label="Primary" data-testid="icon-rail">
       <button
@@ -120,19 +114,6 @@ export default function NavRail({ active, onNavigate }: NavRailProps) {
       ))}
 
       <div className="rail__spacer" />
-
-      <button
-        className="rail-btn"
-        id="theme-toggle"
-        aria-label="Toggle theme"
-        title="Toggle light / dark"
-        data-testid="theme-toggle"
-        onClick={onToggleTheme}
-      >
-        <RailIcon>
-          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
-        </RailIcon>
-      </button>
     </nav>
   );
 }

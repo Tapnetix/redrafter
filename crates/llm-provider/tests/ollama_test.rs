@@ -10,7 +10,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         messages: vec![ChatMessage::system("Be concise."), ChatMessage::user("Hi")],
         model: "llama3".to_string(),
-        temperature: 0.7,
+        temperature: Some(0.7),
         max_tokens: Some(100),
     }
 }

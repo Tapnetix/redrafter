@@ -70,7 +70,7 @@ test.describe('Preset export (S29)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-presets').click();
+    await page.getByTestId('nav-presets').click();
     await expect(page.getByTestId('presets-screen')).toBeVisible();
 
     // Both seeded user presets show up in "My presets" before export.

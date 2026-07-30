@@ -48,7 +48,7 @@ test.describe('History copy (S30)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await expect(page.getByTestId('history-row')).toBeVisible();
 
     await page.getByTestId('history-copy').click();
@@ -71,7 +71,7 @@ test.describe('History copy (S30)', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-shell')).toBeVisible();
 
-    await page.getByTestId('rail-history').click();
+    await page.getByTestId('nav-history').click();
     await page.getByTestId('history-view').click();
     await expect(page.getByTestId('history-detail')).toBeVisible();
 

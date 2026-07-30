@@ -41,7 +41,7 @@ test.describe('Favorite a model (S25)', () => {
     page,
   }) => {
     await page.goto('/');
-    await page.getByTestId('rail-models').click();
+    await page.getByTestId('nav-models').click();
     await expect(page.getByTestId('models-table')).toBeVisible();
 
     const opusStar = page.getByTestId('model-favorite-claude-opus-4-6');

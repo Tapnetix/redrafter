@@ -30,6 +30,7 @@ import { listen } from '@tauri-apps/api/event';
 import NavRail from '@/components/NavRail';
 import Sidebar from '@/components/Sidebar';
 import FeedbackCues from '@/components/FeedbackCues';
+import ThemeToggle from '@/components/ThemeToggle';
 import Onboarding from '@/screens/Onboarding';
 import FirstRun from '@/screens/FirstRun';
 import { getPermissionStatus, connectionList } from '@/lib/ipc';
@@ -171,6 +172,8 @@ export default function App() {
       <main className="main">
         <header className="topbar">
           <h1 className="topbar__title">{SECTION_TITLES[section]}</h1>
+          <div className="topbar__spacer" />
+          <ThemeToggle />
         </header>
         <div className="content" style={{ padding: 0 }}>
           <SectionView section={section} onNavigate={navigate} />
