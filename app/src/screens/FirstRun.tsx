@@ -109,12 +109,14 @@ export default function FirstRun({ onContinue }: FirstRunProps) {
   return (
     <div className="min-h-screen grid place-items-center p-6 bg-[var(--bg)] text-[var(--text)]">
       <div className="w-[600px] max-w-[94vw]">
-        <div
-          aria-hidden="true"
-          className="w-[46px] h-[46px] rounded-[var(--radius)] mb-4 grid place-items-center text-white font-bold text-xl bg-gradient-to-br from-[var(--accent-400)] to-[var(--accent-600)]"
-        >
-          R
-        </div>
+        <img
+          src="/logo.png"
+          alt=""
+          width={46}
+          height={46}
+          draggable={false}
+          className="w-[46px] h-[46px] mb-4"
+        />
         <p className="font-mono text-xs tracking-widest uppercase text-[var(--primary)] mb-2">First run</p>
         <h1 className="text-[30px] font-bold tracking-tight mb-2.5">Connect your first AI provider</h1>
         <p className="text-[var(--text-secondary)] text-base max-w-[56ch] mb-2">

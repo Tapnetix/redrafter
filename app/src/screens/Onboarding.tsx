@@ -75,7 +75,7 @@ export default function Onboarding({ onContinue }: OnboardingProps) {
   return (
     <div className="setup">
       <div className="setup__card">
-        <div className="setup__logo" aria-hidden="true">R</div>
+        <img className="setup__logo" src="/logo.png" alt="" width={46} height={46} draggable={false} />
         <p className="eyebrow">First run</p>
         <h1>One permission to redraft anywhere</h1>
         <p className="muted" style={{ fontSize: 16, margin: '0 0 20px', maxWidth: '52ch' }}>

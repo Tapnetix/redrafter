@@ -75,12 +75,34 @@ pub fn position_near_cursor(cursor: (f64, f64), hud: (f64, f64), monitor: Rect) 
     (x, y)
 }
 
+/// Environment variable that suppresses the HUD window entirely.
+///
+/// `tauri-driver` (and the WebKitWebDriver behind it) cannot create a session
+/// against an app that exposes a second webview — session creation just times
+/// out — which takes down `e2e-real`, the only harness that drives the real
+/// packaged binary. Rather than lose that acceptance gate, the HUD can be
+/// switched off for a WebDriver run; `e2e-real/wdio.conf.ts` sets this.
+pub const DISABLE_HUD_ENV: &str = "REDRAFTER_DISABLE_HUD";
+
+/// Whether [`DISABLE_HUD_ENV`] asks for the HUD to be suppressed. Any value
+/// other than an empty string or "0" counts as "yes".
+pub fn hud_disabled_from(value: Option<&str>) -> bool {
+    matches!(value, Some(v) if !v.is_empty() && v != "0")
+}
+
+fn hud_disabled() -> bool {
+    hud_disabled_from(std::env::var(DISABLE_HUD_ENV).ok().as_deref())
+}
+
 /// Builds the HUD window, hidden. Called once from the app's `setup`.
 ///
 /// Failure is logged and swallowed: a missing HUD must never stop the app from
 /// starting, and the menu-bar spinner still reports progress without it.
 pub fn create<R: Runtime>(app: &tauri::AppHandle<R>) {
     if app.get_webview_window(HUD_LABEL).is_some() {
+        return;
+    }
+    if hud_disabled() {
         return;
     }
     let built = WebviewWindowBuilder::new(app, HUD_LABEL, WebviewUrl::App("hud".into()))
@@ -163,6 +185,15 @@ mod tests {
             width: 1920.0,
             height: 1080.0,
         }
+    }
+
+    #[test]
+    fn the_disable_switch_reads_the_usual_truthy_spellings() {
+        assert!(!hud_disabled_from(None));
+        assert!(!hud_disabled_from(Some("")));
+        assert!(!hud_disabled_from(Some("0")));
+        assert!(hud_disabled_from(Some("1")));
+        assert!(hud_disabled_from(Some("true")));
     }
 
     #[test]

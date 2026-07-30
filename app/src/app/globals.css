@@ -22,6 +22,28 @@ body {
   overflow-y: auto;
 }
 
+/* The brand mark replaces the placeholder "R" in the nav rail, the onboarding
+   card and first-run. `.rail__logo`/`.setup__logo` were built to letterspace a
+   glyph on a gradient tile, so drop the tile: the logo is itself a rounded
+   square with transparent corners, and leaving the gradient behind it would
+   show through those corners as coloured nubs. */
+.rail__logo,
+img.setup__logo {
+  background: none;
+  box-shadow: none;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+}
+
+.rail__logo img,
+img.setup__logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* The Models screen's active-model picker (`model-active-radio-*`) puts
    `role="radio"`/`aria-checked` on the `.radio-mark` button itself, inside a
    table row. The wireframe only styles the checked dot via an ancestor

@@ -102,7 +102,7 @@ export default function NavRail({ active, onNavigate }: NavRailProps) {
         data-testid="rail-logo"
         onClick={() => onNavigate('general')}
       >
-        R
+        <img src="/logo.png" alt="" width={34} height={34} draggable={false} />
       </button>
 
       {RAIL_ITEMS.map((item) => (
