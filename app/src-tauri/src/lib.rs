@@ -45,6 +45,7 @@ pub mod quote_parser;
 pub mod secrets;
 pub mod settings;
 pub mod tray;
+pub mod tray_icon_frames;
 
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -578,11 +579,20 @@ impl TrayStatusSink for SystemTrayStatus {
         status: RefineStatus,
     ) {
         match status {
-            RefineStatus::Refining => tray::set_status_message(app, "Refining…"),
+            RefineStatus::Refining => {
+                tray::set_status_message(app, "Refining…");
+                tray::set_busy_icon(app, true);
+            }
             // Restore the resting Ready/Paused tooltip rather than leaving a
             // transient "idle" string on it.
-            RefineStatus::Idle => tray::refresh_tray(app),
-            RefineStatus::Error => tray::set_status_message(app, "Refine failed"),
+            RefineStatus::Idle => {
+                tray::set_busy_icon(app, false);
+                tray::refresh_tray(app);
+            }
+            RefineStatus::Error => {
+                tray::set_busy_icon(app, false);
+                tray::set_status_message(app, "Refine failed");
+            }
         }
     }
 }

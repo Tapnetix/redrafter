@@ -100,6 +100,87 @@ pub(crate) fn set_status_message<R: Runtime>(app: &tauri::AppHandle<R>, message:
     }
 }
 
+/// Generation counter for the menu-bar spin animation. Every call to
+/// [`set_busy_icon`] bumps it; the animation thread stops as soon as it sees a
+/// number other than its own, so a second refine starting (or finishing)
+/// cannot leave two threads fighting over the icon.
+static SPIN_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How long each spinner frame is held.
+const SPIN_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// The resting menu-bar icon, restored when a refine ends. Embedded rather
+/// than re-read from disk so restoring can never fail on a moved//missing
+/// bundle resource.
+const RESTING_ICON_PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
+
+/// Starts or stops the menu-bar icon's in-flight animation.
+///
+/// The tooltip alone (see [`set_status_message`]) was invisible unless the user
+/// happened to hover the menu bar, and the frontend spinner renders in the
+/// settings window — hidden for the whole refine, since the refine is triggered
+/// from another app. The icon is the one surface that is always on screen.
+///
+/// Icon updates are marshalled onto the main thread: menu-bar mutation is
+/// main-thread-only on macOS, and this is driven from a worker.
+pub(crate) fn set_busy_icon<R: Runtime>(app: &tauri::AppHandle<R>, busy: bool) {
+    use std::sync::atomic::Ordering;
+
+    let generation = SPIN_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if !busy {
+        restore_resting_icon(app);
+        return;
+    }
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        for frame in 0.. {
+            if SPIN_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let rgba = crate::tray_icon_frames::spinner_frame_rgba(
+                frame,
+                crate::tray_icon_frames::SPINNER_SIZE,
+            );
+            let inner = handle.clone();
+            let posted = handle.run_on_main_thread(move || {
+                if let Some(tray) = inner.tray_by_id("main") {
+                    let image = tauri::image::Image::new_owned(
+                        rgba,
+                        crate::tray_icon_frames::SPINNER_SIZE,
+                        crate::tray_icon_frames::SPINNER_SIZE,
+                    );
+                    let _ = tray.set_icon(Some(image));
+                    // Keep template rendering on so the spinner follows the
+                    // menu bar's light/dark appearance like the resting mark.
+                    let _ = tray.set_icon_as_template(true);
+                }
+            });
+            if posted.is_err() {
+                // The app is shutting down; stop rather than spin forever.
+                return;
+            }
+            std::thread::sleep(SPIN_FRAME_INTERVAL);
+        }
+    });
+}
+
+/// Puts the brand mark back, on the main thread.
+fn restore_resting_icon<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(tray) = handle.tray_by_id("main") {
+            match tauri::image::Image::from_bytes(RESTING_ICON_PNG) {
+                Ok(image) => {
+                    let _ = tray.set_icon(Some(image.to_owned()));
+                    let _ = tray.set_icon_as_template(true);
+                }
+                Err(e) => eprintln!("[tray] could not decode the resting icon: {e}"),
+            }
+        }
+    });
+}
+
 /// Which section of the active-model switcher a [`TrayModelRow`] falls in,
 /// mirroring `rebuild_tray_menu`'s two-part layout: the flat favorites list
 /// first, then every model grouped by provider (first-seen order). A
