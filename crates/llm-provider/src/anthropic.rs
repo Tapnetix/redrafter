@@ -137,6 +137,36 @@ impl AnthropicProvider {
     }
 }
 
+/// A targeted hint when the credential is the *wrong kind*, rather than merely
+/// wrong.
+///
+/// Anthropic issues several `sk-ant-…` credentials that are not
+/// interchangeable, and the API's own 401 ("invalid x-api-key") can't tell you
+/// which mistake you made. The common one: a token minted by Claude Code is an
+/// OAuth token authenticating as `Authorization: Bearer`, so pasting it into
+/// an API-key field always fails no matter how many times it's regenerated.
+fn credential_hint(auth: &AnthropicAuth) -> Option<&'static str> {
+    let AnthropicAuth::ApiKey(key) = auth else {
+        return None;
+    };
+    if key.starts_with("sk-ant-oat") {
+        Some(
+            "that looks like a Claude Code OAuth token rather than a Console API key — \
+             use the \"Use your Claude Code login\" button instead of pasting it as a key",
+        )
+    } else if key.starts_with("sk-ant-ort") {
+        Some("that is an OAuth *refresh* token, not an API key")
+    } else if key.starts_with("sk-ant-sid") {
+        Some("that looks like a claude.ai session key rather than a Console API key")
+    } else if key.starts_with("sk-ant-admin") {
+        Some("that is an Admin API key, which cannot call the Messages API")
+    } else if !key.starts_with("sk-ant-") {
+        Some("Console API keys start with \"sk-ant-\"")
+    } else {
+        None
+    }
+}
+
 /// Pulls `error.message` out of an Anthropic error body, if it looks like one.
 /// Returns `None` for anything unparseable so the caller can fall back to the
 /// bare status rather than printing a wall of HTML.
@@ -283,10 +313,19 @@ impl LlmProvider for AnthropicProvider {
         // message ("API key is invalid.", "credit balance is too low", …)
         // rather than the bare status, since it is the actionable half.
         let body = response.text().await.unwrap_or_default();
-        Err(match extract_error_message(&body) {
+        let mut reason = match extract_error_message(&body) {
             Some(message) => format!("{status}: {message}"),
             None => format!("{status} from {url}"),
-        })
+        };
+        // Only on an auth failure: a hint about the credential's shape is
+        // noise next to a 429 or a 500.
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(hint) = credential_hint(&self.auth) {
+                reason.push_str(" — ");
+                reason.push_str(hint);
+            }
+        }
+        Err(reason)
     }
 
     fn provider_name(&self) -> &'static str {
@@ -384,5 +423,52 @@ mod availability_tests {
     fn a_pasted_base_url_is_trimmed_of_space_and_trailing_slashes() {
         let provider = AnthropicProvider::new("  https://api.anthropic.com/  ", "k");
         assert_eq!(provider.base_url, "https://api.anthropic.com");
+    }
+}
+
+#[cfg(test)]
+mod credential_hint_tests {
+    use super::*;
+
+    fn hint(key: &str) -> Option<&'static str> {
+        credential_hint(&AnthropicAuth::ApiKey(key.to_string()))
+    }
+
+    #[test]
+    fn a_claude_code_oauth_token_pasted_as_a_key_is_named_as_such() {
+        // The exact confusion this exists for: the API only says "invalid
+        // x-api-key", so regenerating the token forever never helps.
+        let h = hint("sk-ant-oat01-abcdef").expect("should be recognised");
+        assert!(h.contains("Claude Code"), "got: {h}");
+        assert!(h.contains("login"), "should point at the button; got: {h}");
+    }
+
+    #[test]
+    fn other_sk_ant_credentials_are_told_apart() {
+        assert!(hint("sk-ant-ort01-x").unwrap().contains("refresh"));
+        assert!(hint("sk-ant-sid01-x").unwrap().contains("session key"));
+        assert!(hint("sk-ant-admin01-x").unwrap().contains("Admin"));
+    }
+
+    #[test]
+    fn something_that_is_not_an_anthropic_credential_at_all_says_so() {
+        assert!(hint("hunter2").unwrap().contains("sk-ant-"));
+        assert!(hint("sk-proj-openai-style").unwrap().contains("sk-ant-"));
+    }
+
+    #[test]
+    fn a_real_console_api_key_gets_no_hint() {
+        // A genuine key that is merely revoked/expired must not be second-
+        // guessed — the API's own message is the useful one there.
+        assert_eq!(hint("sk-ant-api03-realkey"), None);
+    }
+
+    #[test]
+    fn an_oauth_credential_is_never_second_guessed() {
+        // It authenticates as Bearer, so the api-key advice would be wrong.
+        assert_eq!(
+            credential_hint(&AnthropicAuth::OAuth("sk-ant-oat01-x".to_string())),
+            None
+        );
     }
 }

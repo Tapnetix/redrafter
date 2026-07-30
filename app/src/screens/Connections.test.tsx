@@ -152,7 +152,7 @@ describe('Connections', () => {
     fireEvent.click(screen.getByTestId('conn-get-key-link'));
 
     await waitFor(() =>
-      expect(mockedIpc.openExternal).toHaveBeenCalledWith('https://console.anthropic.com/settings/keys'),
+      expect(mockedIpc.openExternal).toHaveBeenCalledWith('https://platform.claude.com/settings/keys'),
     );
   });
 

@@ -23,7 +23,7 @@ const CLOUD_PROVIDERS: CloudProviderInfo[] = [
     id: 'anthropic',
     label: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
-    keyUrl: 'https://console.anthropic.com/settings/keys',
+    keyUrl: 'https://platform.claude.com/settings/keys',
   },
   {
     id: 'openai',

@@ -56,7 +56,7 @@ const PROVIDER_TYPES: ProviderTypeInfo[] = [
     id: 'anthropic',
     label: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
-    keyUrl: 'https://console.anthropic.com/settings/keys',
+    keyUrl: 'https://platform.claude.com/settings/keys',
     needsKey: true,
   },
   {
