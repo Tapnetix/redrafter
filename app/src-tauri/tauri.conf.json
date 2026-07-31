@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicovank/tauri-v2-schema/main/schema.json",
   "productName": "redrafter",
   "identifier": "com.tapnetix.redrafter",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "build": {
     "beforeBuildCommand": "pnpm build",
     "beforeDevCommand": "pnpm dev",
