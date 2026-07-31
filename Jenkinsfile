@@ -732,7 +732,7 @@ PY
                                         # shellcheck disable=SC2086  # NOTES_ARGS is two deliberate words
                                         gh release create "$RELEASE_TAG" release-artifacts/* \
                                             --repo "$REPO" \
-                                            --title "redrafter ${RELEASE_TAG}" \
+                                            --title "redrafter ${RELEASE_VERSION}" \
                                             --latest \
                                             $NOTES_ARGS
                                     fi
