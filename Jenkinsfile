@@ -597,6 +597,13 @@ pipeline {
                                 sh '''
                                     set -eux
                                     REPO="Tapnetix/redrafter"
+                                    # Start from empty. The workspace is reused between builds,
+                                    # so a leftover release-artifacts/ from the previous run gets
+                                    # published alongside this version's files — which is exactly
+                                    # what the guard below caught on the first CI-published
+                                    # release, after the collection filter had already been fixed.
+                                    # Two separate hoards of stale files, same root cause.
+                                    rm -rf release-artifacts
                                     mkdir -p release-artifacts
                                     # Collect only THIS version's bundles. The agent workspace is
                                     # reused across builds and `tauri build` never prunes
