@@ -65,22 +65,23 @@ pub fn position_near_cursor(cursor: (f64, f64), hud: (f64, f64), monitor: Rect) 
     let (w, h) = hud;
 
     // Preferred: below and to the right, the direction a tooltip grows.
-    let mut x = cx + CURSOR_GAP;
+    let x = cx + CURSOR_GAP;
     let mut y = cy + CURSOR_GAP;
 
-    // Flip rather than merely clamp when the preferred side doesn't fit, so
-    // the chip stays beside the pointer instead of sliding under it.
-    if x + w > monitor.x + monitor.width {
-        x = cx - CURSOR_GAP - w;
-    }
+    // Vertically, flip above when there is no room below: the chip is short,
+    // so flipping keeps it adjacent to the pointer.
     if y + h > monitor.y + monitor.height {
         y = cy - CURSOR_GAP - h;
     }
 
-    // A monitor narrower than the chip (or a cursor right at the origin) can
-    // still leave it out of bounds; clamp as the last resort.
-    x = x.clamp(monitor.x, (monitor.x + monitor.width - w).max(monitor.x));
-    y = y.clamp(monitor.y, (monitor.y + monitor.height - h).max(monitor.y));
+    // Horizontally, clamp — do NOT flip. Flipping moved the chip a whole
+    // chip-width plus the gap to the other side of the pointer, which reads as
+    // the chip leaping away for no reason: within one chip-width of the screen
+    // edge it jumped ~280px left while the pointer had barely moved. Clamping
+    // slides it just far enough to fit and it stays beside the pointer. The
+    // vertical offset means it still never covers the pointer itself.
+    let x = x.clamp(monitor.x, (monitor.x + monitor.width - w).max(monitor.x));
+    let y = y.clamp(monitor.y, (monitor.y + monitor.height - h).max(monitor.y));
     (x, y)
 }
 
@@ -252,7 +253,12 @@ pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) {
         (Ok(cursor), Some(monitor)) => {
             let pos = monitor.position();
             let size = monitor.size();
-            let scale = window.scale_factor().unwrap_or_else(|_| monitor.scale_factor());
+            // The *target* monitor's scale, not the window's. They differ on a
+            // mixed-DPI setup, and the window hasn't moved yet at this point:
+            // the first refine after launch reported scale=1 for a Retina
+            // display, so the chip was treated as 132px wide when it was
+            // really 264 and was placed 78px off the edge of the screen.
+            let scale = monitor.scale_factor();
             let (logical_w, logical_h) = match HUD_MESSAGE.lock().unwrap().as_ref() {
                 Some(state) if state.kind == "error" => (HUD_ERROR_WIDTH, HUD_ERROR_HEIGHT),
                 _ => (HUD_WIDTH, HUD_HEIGHT),
@@ -354,9 +360,36 @@ mod tests {
     }
 
     #[test]
-    fn flips_left_at_the_right_edge() {
+    fn slides_left_at_the_right_edge_rather_than_leaping_past_the_pointer() {
+        // Was: flip to `cursor - gap - width`, i.e. a whole chip-width away.
+        // Now: sit as far right as it fits, still beside the pointer.
         let (x, _) = position_near_cursor((1900.0, 300.0), HUD, screen());
-        assert_eq!(x, 1900.0 - CURSOR_GAP - HUD.0);
+        assert_eq!(x, 1920.0 - HUD.0);
+        assert!(x > 1900.0 - HUD.0, "the chip should stay next to the pointer");
+    }
+
+    /// The exact numbers from a user's log: a portrait Retina display left of
+    /// the primary. With the pointer 190px from that screen's right edge the
+    /// chip jumped from x=-288 to x=-472 between two refines, while the
+    /// pointer had barely moved.
+    #[test]
+    fn stays_put_near_the_edge_of_a_negative_origin_monitor() {
+        let monitor = Rect { x: -2160.0, y: 0.0, width: 2160.0, height: 3840.0 };
+        let retina_chip = (264.0, 68.0); // 132x34 at scale 2
+
+        let (near, _) = position_near_cursor((-306.0, 1617.0), retina_chip, monitor);
+        let (nearer, _) = position_near_cursor((-190.0, 1660.0), retina_chip, monitor);
+
+        // Both fully on screen.
+        assert!(near >= -2160.0 && near + retina_chip.0 <= 0.0, "got {near}");
+        assert!(nearer >= -2160.0 && nearer + retina_chip.0 <= 0.0, "got {nearer}");
+        // And 116px of pointer movement must not throw the chip 184px the
+        // other way, as the flip did.
+        assert!(
+            (nearer - near).abs() < 130.0,
+            "chip jumped {} for a 116px pointer move (was -288 -> -472)",
+            nearer - near
+        );
     }
 
     #[test]
@@ -366,10 +399,10 @@ mod tests {
     }
 
     #[test]
-    fn flips_both_ways_in_the_bottom_right_corner() {
+    fn in_the_bottom_right_corner_it_flips_up_and_slides_left() {
         let (x, y) = position_near_cursor((1915.0, 1075.0), HUD, screen());
-        assert_eq!(x, 1915.0 - CURSOR_GAP - HUD.0);
-        assert_eq!(y, 1075.0 - CURSOR_GAP - HUD.1);
+        assert_eq!(x, 1920.0 - HUD.0, "horizontal: clamped, not flipped");
+        assert_eq!(y, 1075.0 - CURSOR_GAP - HUD.1, "vertical: flipped above");
     }
 
     #[test]
