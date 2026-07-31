@@ -354,7 +354,10 @@ impl<C: TextCapture, I: TextInjector> Orchestrator<C, I> {
 
         let outcome = RefineOutcome {
             original,
-            refined: response.text,
+            // The model's reply goes straight into the user's document, so
+            // strip anything it wrapped around the rewrite (delimiters,
+            // "**What changed:**" notes, fences, quotes) before it lands.
+            refined: crate::response_cleaner::extract_refined(&response.text),
             model: response.model,
         };
 

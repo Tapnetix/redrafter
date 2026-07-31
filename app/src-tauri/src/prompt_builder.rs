@@ -20,6 +20,14 @@ and clarity. Preserve the author's voice, tone, and overall length — this is a
 rewrite. Do not summarize or change the meaning. Reply with only the corrected text: no \
 commentary, preamble, or surrounding quotation marks.";
 
+/// Appended to every refine, whatever direction is in force: the model must
+/// return the rewrite and nothing else, wrapped in tags we can read back.
+pub const OUTPUT_CONTRACT: &str = "Return ONLY the rewritten text, wrapped in \
+<refined></refined> tags, like: <refined>the rewritten text</refined>. Put nothing outside the \
+tags. Do not explain what you changed, do not add notes, headings, or commentary, and do not \
+wrap the text in quotes or code fences. If the input needs no changes, return it unchanged \
+inside the tags.";
+
 /// How a selection's quoted context is handled when there's no explicit
 /// `/q` tag — the Behavior screen's "When the selection has a quote"
 /// setting (`behavior.quote_mode`), threaded in by the command layer
@@ -96,7 +104,20 @@ pub fn build(input: &str, opts: &BuildOptions) -> LlmRequest {
         ));
     }
 
-    let mut messages = vec![ChatMessage::system(direction)];
+    // The output contract is appended to *whatever* direction is in force,
+    // rather than living inside DEFAULT_DIRECTION. A `/rd` instruction or a
+    // preset replaces the direction wholesale, which used to take the only
+    // "reply with just the text" wording with it — so a custom or friendly
+    // direction was markedly more likely to come back with an explanation
+    // attached, and that explanation was pasted into the user's document.
+    //
+    // A delimiter is honoured far more reliably than a plain request for no
+    // commentary; `response_cleaner` reads what is between the tags, and falls
+    // back to trimming if a model ignores them.
+    let mut messages = vec![
+        ChatMessage::system(direction),
+        ChatMessage::system(OUTPUT_CONTRACT.to_string()),
+    ];
     if let Some(quote) = opts.quote.as_deref().filter(|q| !q.trim().is_empty()) {
         messages.push(ChatMessage::system(format!(
             "Quoted context from the conversation, for reference only — do not rewrite it or \
@@ -173,10 +194,14 @@ mod tests {
 
         assert_eq!(
             request.messages.len(),
-            3,
-            "system direction + quote context + user draft"
+            4,
+            "system direction + output contract + quote context + user draft"
         );
-        let quote_message = &request.messages[1];
+        let quote_message = request
+            .messages
+            .iter()
+            .find(|m| m.content.contains("Alex wrote"))
+            .expect("the quote should be its own system message");
         assert_eq!(quote_message.role, "system");
         assert!(quote_message.content.contains("Alex wrote"));
         assert!(quote_message
@@ -199,8 +224,8 @@ mod tests {
 
         assert_eq!(
             request.messages.len(),
-            2,
-            "just system direction + user draft"
+            3,
+            "system direction + output contract + user draft"
         );
     }
 
@@ -213,7 +238,7 @@ mod tests {
 
         let request = build("hi there", &opts);
 
-        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages.len(), 3);
     }
 
     #[test]
@@ -232,11 +257,61 @@ mod tests {
             .content
             .contains("keep it warm but concise"));
         assert!(request.messages[0].content.contains("de"));
-        assert!(request.messages[1].content.contains("Alex wrote"));
+        assert!(request
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Alex wrote")));
         assert_eq!(
             request.messages.last().unwrap().content,
             "we're good, shipping Monday"
         );
         assert_eq!(request.model, "fake-model");
+    }
+}
+
+#[cfg(test)]
+mod output_contract_tests {
+    use super::*;
+
+    fn system_text(request: &LlmRequest) -> String {
+        request
+            .messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn every_refine_asks_for_the_rewrite_in_tags() {
+        let request = build("hi", &BuildOptions::default());
+        assert!(system_text(&request).contains("<refined></refined>"));
+    }
+
+    /// The regression this exists for: a `/rd` instruction or a preset
+    /// replaces the direction wholesale, which used to discard the only
+    /// "reply with just the text" wording — so custom directions were the
+    /// ones most likely to come back with an explanation attached.
+    #[test]
+    fn a_custom_direction_still_gets_the_output_contract() {
+        let opts = BuildOptions {
+            direction: Some("make it friendly".to_string()),
+            ..Default::default()
+        };
+        let request = build("hi", &opts);
+        let system = system_text(&request);
+
+        assert!(system.contains("make it friendly"), "the direction survives");
+        assert!(system.contains("<refined></refined>"), "and so does the contract");
+        assert!(system.to_lowercase().contains("do not explain"));
+    }
+
+    #[test]
+    fn the_contract_does_not_displace_the_draft() {
+        let request = build("the draft text", &BuildOptions::default());
+        let user = request.messages.last().unwrap();
+        assert_eq!(user.role, "user");
+        assert_eq!(user.content, "the draft text");
     }
 }

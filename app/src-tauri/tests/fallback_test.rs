@@ -30,6 +30,12 @@ mod prompt_builder {
 mod presets {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/presets.rs"));
 }
+mod response_cleaner {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/response_cleaner.rs"
+    ));
+}
 mod orchestrator {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/orchestrator.rs"));
 }

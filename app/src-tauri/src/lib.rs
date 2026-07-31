@@ -45,6 +45,7 @@ pub mod presets;
 pub mod review;
 pub mod prompt_builder;
 pub mod quote_parser;
+pub mod response_cleaner;
 pub mod secrets;
 pub mod settings;
 pub mod tray;
