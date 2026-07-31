@@ -672,15 +672,37 @@ PY
 
                                     echo "=== release artifacts (final, incl. latest.json) ==="; ls -lh release-artifacts/ || true
 
+                                    # Prefer notes written for this release and committed alongside
+                                    # the version bump; fall back to the generated commit list.
+                                    # Without this, CI would publish a changelog of commit subjects
+                                    # where the hand-written notes say what actually changed for a
+                                    # user — a visible downgrade from how these have been released
+                                    # so far.
+                                    NOTES_FILE="docs/release-notes/${RELEASE_TAG}.md"
+                                    if [ -f "$NOTES_FILE" ]; then
+                                        echo "Using release notes from $NOTES_FILE."
+                                        NOTES_ARGS="--notes-file $NOTES_FILE"
+                                    else
+                                        echo "No $NOTES_FILE — falling back to generated notes."
+                                        NOTES_ARGS="--generate-notes"
+                                    fi
+
                                     if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
                                         echo "Release $RELEASE_TAG exists — uploading assets (clobber)."
                                         gh release upload "$RELEASE_TAG" release-artifacts/* --repo "$REPO" --clobber
+                                        # Keep the notes in step with the file, so re-running a
+                                        # release after fixing its notes actually updates them.
+                                        if [ -f "$NOTES_FILE" ]; then
+                                            gh release edit "$RELEASE_TAG" --repo "$REPO" --notes-file "$NOTES_FILE"
+                                        fi
                                     else
                                         echo "Creating release $RELEASE_TAG."
+                                        # shellcheck disable=SC2086  # NOTES_ARGS is two deliberate words
                                         gh release create "$RELEASE_TAG" release-artifacts/* \
                                             --repo "$REPO" \
                                             --title "redrafter ${RELEASE_TAG}" \
-                                            --generate-notes
+                                            --latest \
+                                            $NOTES_ARGS
                                     fi
                                     echo "GitHub Release ${RELEASE_TAG} published with $(ls release-artifacts | wc -l) asset(s)."
                                 '''
