@@ -598,11 +598,36 @@ pipeline {
                                     set -eux
                                     REPO="Tapnetix/redrafter"
                                     mkdir -p release-artifacts
+                                    # Collect only THIS version's bundles. The agent workspace is
+                                    # reused across builds and `tauri build` never prunes
+                                    # target/release/bundle, so it accumulates every past release's
+                                    # .deb/.rpm — an unfiltered find attached all of them to the
+                                    # release (v0.1.11 briefly carried 32 assets, twelve of them
+                                    # historical rpms). The two macOS updater files are unversioned
+                                    # by Tauri's own naming and are rebuilt every run, so they are
+                                    # matched by name.
                                     find target/release/bundle -type f \\
-                                        \\( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \\
-                                           -o -name '*.dmg' -o -name '*.exe' -o -name '*.app.tar.gz' \\
-                                           -o -name '*.sig' \\) \\
+                                        \\( -name "*_${RELEASE_VERSION}_*.deb" \\
+                                           -o -name "*-${RELEASE_VERSION}-*.rpm" \\
+                                           -o -name "*_${RELEASE_VERSION}_*.AppImage" \\
+                                           -o -name "*_${RELEASE_VERSION}_*.AppImage.sig" \\
+                                           -o -name "*_${RELEASE_VERSION}_*.dmg" \\
+                                           -o -name "*_${RELEASE_VERSION}_*.exe" \\
+                                           -o -name "*_${RELEASE_VERSION}_*.exe.sig" \\
+                                           -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \\) \\
                                         -exec cp -v {} release-artifacts/ \\; || true
+
+                                    # Refuse to publish someone else's version. Cheap, and the
+                                    # failure mode it guards against shipped silently once.
+                                    STRAY=$(find release-artifacts -type f \\
+                                        ! -name "*${RELEASE_VERSION}*" \\
+                                        ! -name 'latest.json' \\
+                                        ! -name '*.app.tar.gz' ! -name '*.app.tar.gz.sig' | sort)
+                                    if [ -n "$STRAY" ]; then
+                                        echo "Refusing to publish: artifacts that are not ${RELEASE_VERSION}:"
+                                        echo "$STRAY"
+                                        exit 1
+                                    fi
                                     echo "=== release artifacts (bundles) ==="; ls -lh release-artifacts/ || true
 
                                     if [ -z "$(ls -A release-artifacts 2>/dev/null)" ]; then
