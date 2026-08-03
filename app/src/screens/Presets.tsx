@@ -298,8 +298,11 @@ export default function Presets() {
     }
   }
 
+  // `settings--wide` / `preset-grid`: this screen is master/detail, not a
+  // single-column form, so it opts out of `.settings`'s 760px cap and lays the
+  // list and editor out fluidly instead. See globals.css.
   return (
-    <div className="settings" data-testid="presets-screen">
+    <div className="settings settings--wide" data-testid="presets-screen">
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
         <button className="btn btn--sm" data-testid="preset-import" onClick={openImport}>
           Import
@@ -309,7 +312,7 @@ export default function Presets() {
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16 }}>
+      <div className="preset-grid" data-testid="preset-grid">
         {/* PRESET LIST */}
         <div>
           <button
@@ -403,7 +406,7 @@ export default function Presets() {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="field-row">
               <div className="field">
                 <label htmlFor="preset-name">Name / trigger</label>
                 <input
@@ -454,7 +457,7 @@ export default function Presets() {
 
             <div className="grp" style={{ padding: 14 }}>
               <div style={{ fontWeight: 600, fontSize: 'var(--fs-small)', marginBottom: 10 }}>Overrides</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div className="field-row">
                 <div className="field">
                   <label htmlFor="preset-lang">Language</label>
                   <input

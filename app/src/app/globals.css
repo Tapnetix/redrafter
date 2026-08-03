@@ -66,6 +66,48 @@ img.setup__logo {
   }
 }
 
+/* The Presets screen is a master/detail layout, but it reuses `.settings` —
+   whose `max-width: 760px` was chosen for the single-column forms (General,
+   Behavior) that share the class. Two columns never fitted in it: the list
+   took 280px and the editor was left with ~420px, which clipped the "Model
+   override" select mid-word and cramped every labelled pair. And because the
+   cap is absolute, enlarging the window only widened the empty gutters either
+   side — the box itself never grew. This variant is fluid, tracking the window
+   up to a width past which a form stops being comfortable to read. */
+.settings--wide {
+  max-width: 1240px;
+}
+
+/* Master/detail. `minmax(0, 1fr)` rather than plain `1fr` (which is
+   `minmax(auto, 1fr)`) lets the editor column shrink below the intrinsic width
+   of its contents, so a long model id or base URL wraps instead of forcing the
+   whole panel wider than the window. The list column gives up its width first,
+   since it only ever holds short `/trigger` labels. */
+.preset-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* Below this the two columns stop being readable side by side — the editor
+   would be narrower than a single field wants — so the list stacks on top. */
+@media (max-width: 720px) {
+  .preset-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A pair of fields inside the editor (name + model override, language +
+   inject behavior). `auto-fit` keeps them side by side while both still fit
+   and drops them to one column when they don't, so a narrow editor never
+   renders a select too small to show its own value. */
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
 /* The Models screen's active-model picker (`model-active-radio-*`) puts
    `role="radio"`/`aria-checked` on the `.radio-mark` button itself, inside a
    table row. The wireframe only styles the checked dot via an ancestor
